@@ -601,6 +601,150 @@ ipcMain.handle('delete-account', async (event, id) => {
   }
 });
 
+// 直接切换账号（接收账号数据）
+ipcMain.handle('switch-account', async (event, accountData) => {
+  try {
+    const { token, email, label } = accountData;
+    
+    if (!token || !email) {
+      return { success: false, message: '账号数据不完整' };
+    }
+
+    if (!windsurfPath) {
+      return { success: false, message: '未找到 Windsurf 路径' };
+    }
+
+    const appDataPath = path.join(app.getPath('appData'), 'PaperCrane-Windsurf');
+    const sessionManager = new SessionManager(windsurfPath, appDataPath);
+    
+    // 创建备份
+    let backupPath = null;
+    try {
+      event.sender.send('switch-progress', { step: 'backup', message: '正在创建配置备份...' });
+      backupPath = sessionManager.createBackup();
+      event.sender.send('switch-progress', { step: 'backup-done', message: '✅ 备份完成' });
+    } catch (backupError) {
+      event.sender.send('switch-progress', { step: 'error', message: '❌ 备份失败' });
+      return { success: false, message: '备份失败，已取消切换: ' + backupError.message };
+    }
+
+    // 关闭 Windsurf
+    const isRunning = await processMonitor.isWindsurfRunning();
+    let closed = false;
+    if (isRunning) {
+      event.sender.send('switch-progress', { step: 'kill', message: '正在关闭 Windsurf...' });
+      const killResult = await processMonitor.killWindsurf();
+      
+      if (!killResult.wasRunning) {
+        closed = true;
+        event.sender.send('switch-progress', { step: 'kill-done', message: '✅ 已关闭 Windsurf' });
+      } else if (killResult.killed) {
+        for (let i = 0; i < 6; i++) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const stillRunning = await processMonitor.isWindsurfRunning();
+          if (!stillRunning) { closed = true; break; }
+        }
+        if (closed) {
+          event.sender.send('switch-progress', { step: 'kill-done', message: '✅ 已关闭 Windsurf' });
+        } else {
+          event.sender.send('switch-progress', { step: 'warning', message: '⚠️ Windsurf 可能未完全关闭，但将继续切换' });
+        }
+      } else {
+        event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 关闭 Windsurf 失败，但将继续切换' });
+      }
+    }
+
+    // 尝试切换账号
+    try {
+      event.sender.send('switch-progress', { step: 'switch', message: '正在更换账号配置...' });
+      await sessionManager.writeAllSessions(token, email, label);
+      event.sender.send('switch-progress', { step: 'switch-done', message: '✅ 已更换账号（含加密）' });
+      
+      event.sender.send('switch-progress', { step: 'reset-device', message: '⏳ 正在重置设备 ID...' });
+      const deviceManager = new DeviceManager(windsurfPath);
+      const deviceIds = deviceManager.resetDeviceIds();
+      
+      if (deviceIds.registryReset) {
+        event.sender.send('switch-progress', { step: 'reset-device-done', message: '✅ 已重置设备 ID（含注册表）' });
+      } else {
+        event.sender.send('switch-progress', { step: 'reset-device-done', message: '✅ 已重置设备 ID' });
+      }
+      
+      event.sender.send('switch-progress', { 
+        step: 'reset-fingerprint-skipped', 
+        message: 'ℹ️ 已跳过设备指纹重置（功能已禁用）' 
+      });
+      
+      configManager.setLastEmail(email);
+      
+      if (isRunning && closed) {
+        event.sender.send('switch-progress', { step: 'launch', message: '⏳ 正在启动 Windsurf...' });
+        await new Promise(resolve => setTimeout(resolve, 1500));
+        
+        let exePath = configManager.getWindsurfExePath();
+        if (!exePath) {
+          exePath = detectWindsurfExecutable();
+        }
+        if (exePath) {
+          const launched = await processMonitor.launchWindsurf(exePath);
+          if (launched) {
+            let started = false;
+            const maxAttempts = 20;
+            for (let i = 0; i < maxAttempts; i++) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+              started = await processMonitor.isWindsurfRunning();
+              if (started) break;
+            }
+            
+            if (started) {
+              event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
+            } else {
+              event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
+            }
+          } else {
+            event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
+          }
+        } else {
+          event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
+        }
+      }
+      
+      event.sender.send('switch-progress', { step: 'complete', message: '✅ 切换完成' });
+      
+      return {
+        success: true,
+        data: { 
+          email: email, 
+          label: label,
+          deviceIds,
+          wasRunning: isRunning
+        }
+      };
+    } catch (switchError) {
+      if (backupPath) {
+        sessionManager.restoreBackup(backupPath);
+      }
+      
+      if (isRunning) {
+        setTimeout(async () => {
+          let exePath = configManager.getWindsurfExePath();
+          if (!exePath) {
+            exePath = detectWindsurfExecutable();
+          }
+          if (exePath) {
+            await processMonitor.launchWindsurf(exePath);
+          }
+        }, 1000);
+      }
+      
+      return { success: false, message: '切换失败，已恢复到备份: ' + switchError.message };
+    }
+  } catch (error) {
+    console.error('切换账号失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // 切换到历史账号
 ipcMain.handle('switch-to-history-account', async (event, id) => {
   try {

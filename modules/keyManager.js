@@ -9,8 +9,8 @@ const path = require('path');
 
 // 配置 API 端点 - 可在此处统一修改
 const API_CONFIG = {
-  // Base URL - 请修改为你的后端服务地址
-  BASE_URL: 'https://your-domain.com/api/client',
+  // Base URL - 后端服务地址
+  BASE_URL: 'https://windsurf.zh8888.top/api/client',
   
   // 超时时间（毫秒）
   TIMEOUT: 10000
