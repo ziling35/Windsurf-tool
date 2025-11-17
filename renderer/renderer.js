@@ -87,6 +87,105 @@ function showModal(title, message) {
   });
 }
 
+// 显示账号密码弹窗（带复制功能）
+function showAccountModal(title, email, password) {
+  return new Promise((resolve) => {
+    const modal = document.getElementById('custom-modal');
+    const modalTitle = document.getElementById('modal-title');
+    const modalMessage = document.getElementById('modal-message');
+    const modalFooter = modal.querySelector('.modal-footer');
+    const confirmBtn = document.getElementById('modal-confirm');
+    const cancelBtn = document.getElementById('modal-cancel');
+    
+    modalTitle.textContent = title;
+    
+    // 构建账号密码显示内容，带复制按钮
+    const passwordText = password || '无（无限额度账号）';
+    const modalContent = `
+      <div style="font-family: 'Microsoft YaHei', '微软雅黑', sans-serif; line-height: 2;">
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+          <span style="flex: 1;">邮箱：${email}</span>
+          <button class="icon-btn copy-btn" data-copy="${email}" title="复制邮箱">
+            <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
+          </button>
+        </div>
+        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+          <span style="flex: 1;">密码：${passwordText}</span>
+          ${password ? `<button class="icon-btn copy-btn" data-copy="${password}" title="复制密码"><i data-lucide="copy" style="width: 16px; height: 16px;"></i></button>` : ''}
+        </div>
+        <div style="border-top: 1px solid #e5e7eb; padding-top: 15px; color: #6b7280; font-size: 14px; font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;">
+          该账号已加入历史列表（不自动切换）。
+        </div>
+      </div>
+    `;
+    
+    modalMessage.innerHTML = modalContent;
+    
+    // 重新创建图标
+    try { lucide.createIcons(); } catch (e) {}
+    
+    // 添加复制全部按钮
+    const copyAllBtn = document.createElement('button');
+    copyAllBtn.className = 'btn btn-secondary';
+    copyAllBtn.innerHTML = '<i data-lucide="copy"></i><span>复制全部</span>';
+    copyAllBtn.style.marginRight = 'auto';
+    
+    // 插入到确认按钮之前
+    modalFooter.insertBefore(copyAllBtn, modalFooter.firstChild);
+    
+    // 重新创建图标
+    try { lucide.createIcons(); } catch (e) {}
+    
+    modal.classList.add('show');
+    
+    // 复制单个字段
+    const copyButtons = modal.querySelectorAll('.copy-btn');
+    copyButtons.forEach(btn => {
+      btn.addEventListener('click', () => {
+        const textToCopy = btn.getAttribute('data-copy');
+        navigator.clipboard.writeText(textToCopy).then(() => {
+          showToast('✅ 已复制到剪贴板', 'success');
+        }).catch(() => {
+          showToast('❌ 复制失败', 'error');
+        });
+      });
+    });
+    
+    // 复制全部（邮箱----密码格式）
+    const handleCopyAll = () => {
+      const fullText = password ? `${email}----${password}` : email;
+      navigator.clipboard.writeText(fullText).then(() => {
+        showToast('✅ 已复制完整账号信息', 'success');
+      }).catch(() => {
+        showToast('❌ 复制失败', 'error');
+      });
+    };
+    
+    const handleConfirm = () => {
+      modal.classList.remove('show');
+      cleanup();
+      resolve(true);
+    };
+    
+    const handleCancel = () => {
+      modal.classList.remove('show');
+      cleanup();
+      resolve(false);
+    };
+    
+    const cleanup = () => {
+      confirmBtn.removeEventListener('click', handleConfirm);
+      cancelBtn.removeEventListener('click', handleCancel);
+      copyAllBtn.removeEventListener('click', handleCopyAll);
+      copyAllBtn.remove(); // 移除复制全部按钮
+    };
+    
+    copyAllBtn.addEventListener('click', handleCopyAll);
+    confirmBtn.addEventListener('click', handleConfirm);
+    cancelBtn.addEventListener('click', handleCancel);
+  });
+}
+
 // 日志函数
 function log(message, type = 'info') {
   const logOutput = document.getElementById('log-output');
@@ -689,12 +788,8 @@ async function showManualInputModal() {
     await checkKeyStatus();
     await loadAccountHistory();
 
-    const lines = [
-      `邮箱：${email}`,
-      password ? `密码：${password}` : '密码：无（无限额度账号）'
-    ];
-
-    await showModal('获取账号成功', lines.join('\n') + '\n\n该账号已加入历史列表（不自动切换）。');
+    // 使用新的账号密码弹窗（带复制功能）
+    await showAccountModal('获取账号成功', email, password);
   } catch (error) {
     log(`❌ 获取账号失败: ${error.message}`, 'error');
     showToast(`获取账号失败: ${error.message}`, 'error');
