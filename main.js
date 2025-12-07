@@ -5,9 +5,53 @@
 
 // 性能监控：记录启动时间
  
-const { app, BrowserWindow, ipcMain, dialog, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+
+// ===== 全局错误处理 =====
+// 创建日志目录
+const logDir = path.join(app.getPath('appData'), 'PaperCrane-Windsurf', 'logs');
+if (!fs.existsSync(logDir)) {
+  fs.mkdirSync(logDir, { recursive: true });
+}
+
+const logFile = path.join(logDir, `app-${new Date().toISOString().split('T')[0]}.log`);
+
+// 日志函数
+function writeLog(level, message, error = null) {
+  const timestamp = new Date().toISOString();
+  let logMessage = `[${timestamp}] [${level}] ${message}`;
+  
+  if (error) {
+    logMessage += `\nError: ${error.message}\nStack: ${error.stack}`;
+  }
+  
+  console.log(logMessage);
+  
+  try {
+    fs.appendFileSync(logFile, logMessage + '\n');
+  } catch (e) {
+    console.error('Failed to write log:', e);
+  }
+}
+
+// 捕获未处理的异常
+process.on('uncaughtException', (error) => {
+  writeLog('ERROR', 'Uncaught Exception', error);
+  console.error('Uncaught Exception:', error);
+  
+  // 显示错误对话框
+  dialog.showErrorBox('应用程序错误', `发生未预期的错误:\n${error.message}\n\n日志已保存到:\n${logFile}`);
+});
+
+// 捕获未处理的 Promise 拒绝
+process.on('unhandledRejection', (reason, promise) => {
+  writeLog('ERROR', `Unhandled Rejection at: ${promise}, reason: ${reason}`);
+  console.error('Unhandled Rejection:', reason);
+});
+
+writeLog('INFO', '应用程序启动');
 
 // ⚠️ 重要：在 app.ready 之前设置 userData 路径，确保与 Windsurf 同源
 // 这样才能使用 safeStorage 解密 Windsurf 的加密数据
@@ -27,19 +71,35 @@ if (process.env.WINDSURF_USER_DATA) {
 }
 
 // 设置 userData 路径为 Windsurf 的路径
-app.setPath('userData', windsurfUserDataPath);
-console.log('🔐 已设置 userData 路径为 Windsurf 路径:', windsurfUserDataPath);
+try {
+  app.setPath('userData', windsurfUserDataPath);
+  writeLog('INFO', `已设置 userData 路径为 Windsurf 路径: ${windsurfUserDataPath}`);
+  console.log('🔐 已设置 userData 路径为 Windsurf 路径:', windsurfUserDataPath);
+} catch (error) {
+  writeLog('ERROR', '设置 userData 路径失败', error);
+  console.error('设置 userData 路径失败:', error);
+}
 
-// 导入核心模块
-const DeviceManager = require('./modules/deviceManager');
-const SessionManager = require('./modules/sessionManager');
-const ProcessMonitor = require('./modules/processMonitor');
-const ConfigManager = require('./modules/configManager');
-const KeyManager = require('./modules/keyManager');
-const AccountHistoryManager = require('./modules/accountHistoryManager');
-const AdminChecker = require('./modules/adminChecker');
-const MacPermissionChecker = require('./modules/macPermissionChecker');
-const SecureStorageManager = require('./modules/secureStorageManager');
+// 导入核心模块（添加错误处理）
+let DeviceManager, SessionManager, ProcessMonitor, ConfigManager, KeyManager, 
+    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager;
+
+try {
+  DeviceManager = require('./modules/deviceManager');
+  SessionManager = require('./modules/sessionManager');
+  ProcessMonitor = require('./modules/processMonitor');
+  ConfigManager = require('./modules/configManager');
+  KeyManager = require('./modules/keyManager');
+  AccountHistoryManager = require('./modules/accountHistoryManager');
+  AdminChecker = require('./modules/adminChecker');
+  MacPermissionChecker = require('./modules/macPermissionChecker');
+  SecureStorageManager = require('./modules/secureStorageManager');
+  writeLog('INFO', '所有核心模块加载成功');
+} catch (error) {
+  writeLog('ERROR', '加载核心模块失败', error);
+  dialog.showErrorBox('模块加载错误', `无法加载必需的模块:\n${error.message}\n\n请确保所有文件完整且 node_modules 已正确安装。`);
+  app.quit();
+}
 
 let mainWindow;
 let windsurfPath; // Windsurf 安装路径
@@ -147,50 +207,91 @@ function getWindsurfDataPath() {
 
 // 创建主窗口
 function createWindow() {
-  mainWindow = new BrowserWindow({
-    width: 1000,
-    height: 625,
-    show: false,
-    useContentSize: true,
-    backgroundColor: '#fafbfc',
-    webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
-      nodeIntegration: false,
-      contextIsolation: true,
-      devTools: false,
-      backgroundThrottling: false
-    },
-    icon: path.join(__dirname, 'assets', 'icon.png'),
-    title: 'PaperCrane-Windsurf',
-    autoHideMenuBar: true
-  });
+  try {
+    writeLog('INFO', '开始创建主窗口');
+    
+    mainWindow = new BrowserWindow({
+      width: 1000,
+      height: 625,
+      show: false,
+      useContentSize: true,
+      backgroundColor: '#fafbfc',
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        devTools: true, // 启用开发者工具以便调试
+        backgroundThrottling: false
+      },
+      icon: path.join(__dirname, 'assets', 'icon.png'),
+      title: 'PaperCrane-Windsurf',
+      autoHideMenuBar: true
+    });
 
-  // 禁用菜单栏
-  mainWindow.setMenu(null);
+    // 禁用菜单栏
+    mainWindow.setMenu(null);
 
-  mainWindow.loadFile('renderer/index.html');
+    // 监听窗口崩溃
+    mainWindow.webContents.on('crashed', (event) => {
+      writeLog('ERROR', '渲染进程崩溃');
+      dialog.showErrorBox('窗口崩溃', '渲染进程意外崩溃。应用将尝试重新创建窗口。');
+      
+      // 尝试重新创建窗口
+      if (mainWindow) {
+        mainWindow.destroy();
+      }
+      setTimeout(() => createWindow(), 1000);
+    });
 
-  // 错误监听（生产环境也保留以便排查）
-  mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
-    console.error('页面加载失败:', errorCode, errorDescription);
-    // 即使加载失败也显示窗口，让用户看到错误
-    if (!mainWindow.isVisible()) {
+    // 监听渲染进程的错误
+    mainWindow.webContents.on('render-process-gone', (event, details) => {
+      writeLog('ERROR', `渲染进程退出: reason=${details.reason}, exitCode=${details.exitCode}`);
+      console.error('渲染进程退出:', details);
+    });
+
+    mainWindow.loadFile('renderer/index.html').catch(error => {
+      writeLog('ERROR', '加载HTML文件失败', error);
+      console.error('加载HTML文件失败:', error);
+    });
+
+    // 错误监听（生产环境也保留以便排查）
+    mainWindow.webContents.on('did-fail-load', (event, errorCode, errorDescription) => {
+      writeLog('ERROR', `页面加载失败: code=${errorCode}, desc=${errorDescription}`);
+      console.error('页面加载失败:', errorCode, errorDescription);
+      // 即使加载失败也显示窗口，让用户看到错误
+      if (!mainWindow.isVisible()) {
+        mainWindow.show();
+      }
+    });
+
+    // 监听控制台消息
+    mainWindow.webContents.on('console-message', (event, level, message, line, sourceId) => {
+      if (level >= 2) { // 警告和错误
+        writeLog('RENDERER', `Console [${level}] ${sourceId}:${line} - ${message}`);
+      }
+    });
+
+    // 正常显示
+    mainWindow.once('ready-to-show', () => {
+      writeLog('INFO', '窗口准备就绪，显示窗口');
       mainWindow.show();
-    }
-  });
+    });
 
-  // 正常显示
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-  });
-
-  // 超时保护：3秒后强制显示（防止 ready-to-show 未触发）
-  setTimeout(() => {
-    if (mainWindow && !mainWindow.isVisible()) {
-      console.log('超时强制显示窗口');
-      mainWindow.show();
-    }
-  }, 3000);
+    // 超时保护：3秒后强制显示（防止 ready-to-show 未触发）
+    setTimeout(() => {
+      if (mainWindow && !mainWindow.isVisible()) {
+        writeLog('WARN', '超时强制显示窗口');
+        console.log('超时强制显示窗口');
+        mainWindow.show();
+      }
+    }, 3000);
+    
+    writeLog('INFO', '主窗口创建成功');
+  } catch (error) {
+    writeLog('ERROR', '创建主窗口失败', error);
+    dialog.showErrorBox('窗口创建失败', `无法创建应用窗口:\n${error.message}`);
+    app.quit();
+  }
 }
 
 // ===== IPC 处理器 =====
@@ -459,7 +560,7 @@ ipcMain.handle('kill-windsurf', async () => {
 });
 
 // 启动 Windsurf
-ipcMain.handle('launch-windsurf', async () => {
+ipcMain.handle('launch-windsurf', async (event, options = {}) => {
   try {
     // 优先使用用户手动选择的路径
     let exePath = configManager.getWindsurfExePath();
@@ -473,8 +574,66 @@ ipcMain.handle('launch-windsurf', async () => {
       return { success: false, message: '未找到 Windsurf 可执行文件，请先手动选择' };
     }
     
+    // 不再使用工作区路径启动，直接启动 Windsurf
     const success = await processMonitor.launchWindsurf(exePath);
     return { success, message: success ? 'Windsurf 已启动' : '启动失败' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+// 检查版本更新
+ipcMain.handle('check-version', async (event, clientVersion) => {
+  try {
+    const result = await KeyManager.checkVersion(clientVersion);
+    return result;
+  } catch (error) {
+    console.error('检查版本失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 保存工作区路径
+ipcMain.handle('save-workspace-path', async (event, workspacePath) => {
+  try {
+    const success = configManager.setLastWorkspacePath(workspacePath);
+    return { success, message: success ? '工作区路径已保存' : '保存失败' };
+  } catch (error) {
+    console.error('保存工作区路径失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 获取工作区路径
+ipcMain.handle('get-workspace-path', async () => {
+  try {
+    const workspacePath = configManager.getLastWorkspacePath();
+    return { success: true, data: { workspacePath } };
+  } catch (error) {
+    console.error('获取工作区路径失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 选择工作区路径
+ipcMain.handle('select-workspace-path', async () => {
+  try {
+    const result = await dialog.showOpenDialog(mainWindow, {
+      properties: ['openDirectory'],
+      title: '选择 Windsurf 工作区文件夹'
+    });
+    
+    if (result.canceled) {
+      return { success: false, message: '已取消' };
+    }
+    
+    const workspacePath = result.filePaths[0];
+    configManager.setLastWorkspacePath(workspacePath);
+    
+    return {
+      success: true,
+      data: { workspacePath }
+    };
   } catch (error) {
     return { success: false, message: error.message };
   }
@@ -898,47 +1057,84 @@ ipcMain.handle('switch-to-history-account', async (event, id) => {
   }
 });
 
+// 打开外部链接
+ipcMain.handle('open-external-url', async (event, url) => {
+  try {
+    if (!url || !url.trim()) {
+      return { success: false, message: '链接为空' };
+    }
+    
+    // 验证URL格式
+    const urlPattern = /^https?:\/\//;
+    if (!urlPattern.test(url)) {
+      return { success: false, message: '链接格式不正确，必须以 http:// 或 https:// 开头' };
+    }
+    
+    await shell.openExternal(url);
+    return { success: true, message: '已在浏览器中打开链接' };
+  } catch (error) {
+    console.error('打开外部链接失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // ===== App 生命周期 =====
 
 app.whenReady().then(async () => {
-  
-  // 记录管理员权限状态（非阻塞，不影响首屏）
-  if (process.platform === 'win32') {
-    AdminChecker.isAdmin()
-      .then((isAdmin) => {
-        if (isAdmin) {
-          console.log('✅ 已以管理员权限运行');
-        } else {
-          console.log('ℹ️ 未以管理员权限运行（部分功能需要时会提示）');
-        }
-      })
-      .catch(() => {});
-  }
+  try {
+    writeLog('INFO', 'App 已就绪，开始初始化');
+    
+    // 记录管理员权限状态（非阻塞，不影响首屏）
+    if (process.platform === 'win32') {
+      AdminChecker.isAdmin()
+        .then((isAdmin) => {
+          if (isAdmin) {
+            writeLog('INFO', '已以管理员权限运行');
+            console.log('✅ 已以管理员权限运行');
+          } else {
+            writeLog('INFO', '未以管理员权限运行');
+            console.log('ℹ️ 未以管理员权限运行（部分功能需要时会提示）');
+          }
+        })
+        .catch((error) => {
+          writeLog('WARN', '检查管理员权限失败', error);
+        });
+    }
 
-  // 初始化配置管理器
-  const appDataPath = path.join(app.getPath('appData'), 'PaperCrane-Windsurf');
-  if (!fs.existsSync(appDataPath)) {
-    fs.mkdirSync(appDataPath, { recursive: true });
+    // 初始化配置管理器
+    const appDataPath = path.join(app.getPath('appData'), 'PaperCrane-Windsurf');
+    if (!fs.existsSync(appDataPath)) {
+      fs.mkdirSync(appDataPath, { recursive: true });
+      writeLog('INFO', `创建应用数据目录: ${appDataPath}`);
+    }
+    
+    configManager = new ConfigManager(appDataPath);
+    processMonitor = new ProcessMonitor();
+    keyManager = new KeyManager(appDataPath);
+    accountHistoryManager = new AccountHistoryManager(appDataPath);
+    writeLog('INFO', '管理器初始化成功');
+    
+    // 初始化安全存储管理器（使用 Windsurf 的路径）
+    secureStorageManager = new SecureStorageManager(windsurfUserDataPath);
+    writeLog('INFO', '安全存储管理器已初始化');
+    console.log('🔐 安全存储管理器已初始化');
+    
+    // KeyManager 已经使用了正确的 BASE_URL (http://localhost:8000/api/client)
+    // 无需额外配置
+    
+    // 设置 Windsurf 数据路径
+    windsurfPath = getWindsurfDataPath();
+    writeLog('INFO', `Windsurf 数据路径: ${windsurfPath}`);
+    writeLog('INFO', `应用配置路径: ${appDataPath}`);
+    console.log('✅ Windsurf 数据路径:', windsurfPath);
+    console.log('✅ 应用配置路径:', appDataPath);
+    
+    createWindow();
+  } catch (error) {
+    writeLog('ERROR', 'App 初始化失败', error);
+    dialog.showErrorBox('初始化失败', `应用初始化失败:\n${error.message}\n\n日志文件: ${logFile}`);
+    app.quit();
   }
-  
-  configManager = new ConfigManager(appDataPath);
-  processMonitor = new ProcessMonitor();
-  keyManager = new KeyManager(appDataPath);
-  accountHistoryManager = new AccountHistoryManager(appDataPath);
-  
-  // 初始化安全存储管理器（使用 Windsurf 的路径）
-  secureStorageManager = new SecureStorageManager(windsurfUserDataPath);
-  console.log('🔐 安全存储管理器已初始化');
-  
-  // KeyManager 已经使用了正确的 BASE_URL (http://localhost:8000/api/client)
-  // 无需额外配置
-  
-  // 设置 Windsurf 数据路径
-  windsurfPath = getWindsurfDataPath();
-  console.log('✅ Windsurf 数据路径:', windsurfPath);
-  console.log('✅ 应用配置路径:', appDataPath);
-  
-  createWindow();
 
   // Mac 系统检查"完全磁盘访问权限"
   if (process.platform === 'darwin') {
@@ -956,7 +1152,7 @@ app.whenReady().then(async () => {
           // 用户点击"查看详细说明"
           // 打开权限指南文件
           const guideFile = path.join(__dirname, 'MAC_PERMISSION_GUIDE.md');
-          require('electron').shell.openPath(guideFile);
+          shell.openPath(guideFile);
         }
       } else if (result.hasPermission) {
         console.log('✅ Mac 完全磁盘访问权限已授予');

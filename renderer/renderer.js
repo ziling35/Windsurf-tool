@@ -2,7 +2,14 @@
  * PaperCrane-Windsurf - 渲染进程 UI 逻辑（重构版）
  */
 
- 
+// 当前客户端版本号
+const CLIENT_VERSION = '1.0.1';
+
+// 版本检查相关
+let lastVersionCheck = 0; // 上次版本检查时间戳
+let isVersionCheckInProgress = false; // 是否正在检查版本
+const VERSION_CHECK_INTERVAL = 5 * 60 * 1000; // 5分钟检查一次
+let versionUpdateRequired = false; // 是否需要更新
 
 // ===== 工具函数 =====
 
@@ -358,6 +365,12 @@ async function saveKey() {
 
 // 查询秘钥状态
 async function checkKeyStatus() {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    return; // 版本过低，阻止操作
+  }
+  
   const keyStatusEl = document.getElementById('key-status');
   const keyRemainingTimeEl = document.getElementById('key-remaining-time');
   const keyRemainingSummaryEl = document.getElementById('key-remaining-summary');
@@ -564,6 +577,50 @@ async function selectWindsurfPath() {
   }
 }
 
+// ===== 工作区路径管理 =====
+
+// 加载工作区路径
+async function loadWorkspacePath() {
+  const input = document.getElementById('workspace-path-input');
+  if (!input) return;
+  
+  const result = await window.electronAPI.getWorkspacePath();
+  if (result.success && result.data.workspacePath) {
+    input.value = result.data.workspacePath;
+  }
+}
+
+// 选择工作区路径
+async function selectWorkspacePath() {
+  log('请选择工作区文件夹...', 'info');
+  
+  const result = await window.electronAPI.selectWorkspacePath();
+  
+  if (result.success) {
+    const input = document.getElementById('workspace-path-input');
+    const { workspacePath } = result.data;
+    
+    input.value = workspacePath;
+    log(`✅ 已设置工作区: ${workspacePath}`, 'success');
+    showToast('工作区路径设置成功', 'success');
+  } else if (result.message !== '已取消') {
+    log(result.message, 'error');
+    showToast(result.message, 'error');
+  }
+}
+
+// 清除工作区路径
+async function clearWorkspacePath() {
+  const input = document.getElementById('workspace-path-input');
+  input.value = '';
+  
+  const result = await window.electronAPI.saveWorkspacePath('');
+  if (result.success) {
+    log('✅ 已清除工作区路径', 'success');
+    showToast('工作区路径已清除', 'success');
+  }
+}
+
 // ===== 账号历史管理 =====
 
 // 加载账号历史
@@ -664,6 +721,13 @@ function bindHistoryItemEvents() {
 
 // 切换到历史账号
 async function switchToHistoryAccount(id) {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
   const confirmed = await showModal('确认切换', '确定要切换到此账号吗？这将关闭并重启 Windsurf。');
   if (!confirmed) return;
   
@@ -745,6 +809,16 @@ async function showManualInputModal() {
     if (!accountResult.success) {
       const code = accountResult.statusCode;
       const msg = accountResult.message || '';
+      const errorCode = accountResult.errorCode;
+
+      // 记录详细错误信息到控制台
+      console.error('获取账号失败详情:');
+      console.error('- 状态码:', code);
+      console.error('- 错误消息:', msg);
+      console.error('- 错误代码:', errorCode);
+      if (accountResult.errorDetails) {
+        console.error('- 错误详情:', accountResult.errorDetails);
+      }
 
       if (code === 429) {
         if (msg.includes('零点刷新')) {
@@ -771,10 +845,13 @@ async function showManualInputModal() {
         throw new Error('暂无可用账号，请联系管理员补充');
       } else if (code === 401) {
         throw new Error('密钥无效，请检查密钥是否正确');
+      } else if (code >= 500) {
+        // 显示具体的服务器错误信息
+        throw new Error(msg || '服务器错误，请稍后再试或联系管理员');
+      } else if (errorCode === 'ECONNREFUSED' || errorCode === 'ENOTFOUND' || errorCode === 'ETIMEDOUT') {
+        // 网络连接问题
+        throw new Error(msg);
       } else {
-        if (code >= 500) {
-          throw new Error('服务器错误，请稍后再试或联系管理员');
-        }
         throw new Error(msg || '获取账号失败');
       }
     }
@@ -815,6 +892,13 @@ function hideManualInputModal() {
 
 // 手动输入切换账号
 async function manualSwitchAccount() {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
   const token = document.getElementById('modal-token-input').value.trim();
   const email = document.getElementById('modal-email-input').value.trim();
   const label = document.getElementById('modal-label-input').value.trim() || 'PaperCrane';
@@ -876,6 +960,13 @@ async function manualSwitchAccount() {
 
 // 重置设备码
 async function resetDeviceIds(skipConfirm = false, source = 'home') {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
   if (!skipConfirm) {
     const confirmed = await showModal('确认重置', '确定要重置设备码吗？重置后需要重启 Windsurf。');
     if (!confirmed) return;
@@ -961,6 +1052,7 @@ async function launchWindsurf(skipToast = false) {
 
   log('正在启动 Windsurf...', 'info');
 
+  // 不再使用工作区路径，直接启动
   const result = await window.electronAPI.launchWindsurf();
 
   if (btn) {
@@ -987,6 +1079,13 @@ async function launchWindsurf(skipToast = false) {
 
 // 一键换号（自动化流程）
 async function oneClickSwitch() {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    showToast('客户端版本过低，请更新后再试', 'error');
+    return; // 版本过低，阻止操作
+  }
+  
   const btn = document.getElementById('one-click-switch-btn');
   let originalHTML = '';
   if (btn) {
@@ -1006,6 +1105,16 @@ async function oneClickSwitch() {
     if (!accountResult.success) {
       const code = accountResult.statusCode;
       const msg = accountResult.message || '';
+      const errorCode = accountResult.errorCode;
+      
+      // 记录详细错误信息到控制台
+      console.error('获取账号失败详情:');
+      console.error('- 状态码:', code);
+      console.error('- 错误消息:', msg);
+      console.error('- 错误代码:', errorCode);
+      if (accountResult.errorDetails) {
+        console.error('- 错误详情:', accountResult.errorDetails);
+      }
       
       // 优化错误提示
       if (code === 429) {
@@ -1035,11 +1144,13 @@ async function oneClickSwitch() {
         throw new Error('暂无可用账号，请联系管理员补充');
       } else if (code === 401) {
         throw new Error('密钥无效，请检查密钥是否正确');
+      } else if (code >= 500) {
+        // 显示具体的服务器错误信息，而不是泛泛而谈
+        throw new Error(msg || '服务器错误，请稍后再试或联系管理员');
+      } else if (errorCode === 'ECONNREFUSED' || errorCode === 'ENOTFOUND' || errorCode === 'ETIMEDOUT') {
+        // 网络连接问题
+        throw new Error(msg);
       } else {
-        // 避免直接显示 500 等技术性错误
-        if (code >= 500) {
-          throw new Error('服务器错误，请稍后再试或联系管理员');
-        }
         throw new Error(msg || '获取账号失败');
       }
     }
@@ -1090,6 +1201,50 @@ async function oneClickSwitch() {
   }
 }
 
+// ===== 购买卡密功能 =====
+
+// 显示购买卡密弹窗
+function showPurchaseModal() {
+  const modal = document.getElementById('purchase-modal');
+  modal.classList.add('show');
+  
+  // 重新渲染图标
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('打开购买卡密弹窗', 'info');
+}
+
+// 隐藏购买卡密弹窗
+function hidePurchaseModal() {
+  const modal = document.getElementById('purchase-modal');
+  modal.classList.remove('show');
+}
+
+// 打开购买链接
+async function openPurchaseLink() {
+  const linkInput = document.getElementById('purchase-link-input');
+  const url = linkInput.value.trim();
+  
+  if (!url) {
+    showToast('购买链接为空', 'error');
+    return;
+  }
+  
+  log(`正在打开购买链接: ${url}`, 'info');
+  
+  // 调用主进程的 API 打开外部链接
+  const result = await window.electronAPI.openExternalUrl(url);
+  
+  if (result && result.success) {
+    showToast('已在浏览器中打开购买链接', 'success');
+    log('✅ 已在浏览器中打开购买链接', 'success');
+  } else {
+    const message = result ? result.message : '打开链接失败';
+    showToast(`打开链接失败: ${message}`, 'error');
+    log(`❌ 打开链接失败: ${message}`, 'error');
+  }
+}
+
 // ===== 导航功能 =====
 
 function initNavigation() {
@@ -1120,10 +1275,129 @@ function initNavigation() {
   });
 }
 
+// ===== 版本控制 =====
+
+// 检查是否需要进行版本检测
+async function checkClientVersion(force = false) {
+  // 如果已经被标记为需要更新，直接返回
+  if (versionUpdateRequired) {
+    return false;
+  }
+
+  // 如果正在检查中，避免重复检查
+  if (isVersionCheckInProgress) {
+    return true;
+  }
+
+  // 检查是否需要进行版本检测（间隔检查）
+  const now = Date.now();
+  if (!force && (now - lastVersionCheck) < VERSION_CHECK_INTERVAL) {
+    return true; // 最近检查过，跳过
+  }
+
+  isVersionCheckInProgress = true;
+  
+  try {
+    const result = await window.electronAPI.checkVersion(CLIENT_VERSION);
+    lastVersionCheck = now;
+    
+    if (!result.success) {
+      console.warn('版本检查失败:', result.message);
+      return true; // 检查失败不阻止操作
+    }
+
+    const { update_required, update_message, version } = result.data;
+    
+    if (update_required) {
+      versionUpdateRequired = true;
+      // 显示强制更新弹窗，阻止所有操作
+      showForceUpdateModal(update_message || '发现新版本，请立即更新', version);
+      return false; // 需要更新，阻止操作
+    } else {
+      console.log('✅ 版本检查通过，当前版本:', CLIENT_VERSION, '服务器版本:', version);
+      return true; // 版本正常，允许操作
+    }
+  } catch (error) {
+    console.error('版本检查异常:', error);
+    return true; // 检查异常不阻止操作
+  } finally {
+    isVersionCheckInProgress = false;
+  }
+}
+
+// 请求前版本检查包装器
+async function withVersionCheck(apiFunction, ...args) {
+  // 检查版本
+  const canProceed = await checkClientVersion();
+  
+  if (!canProceed) {
+    throw new Error('客户端版本过低，请更新后再试');
+  }
+  
+  // 执行实际的API调用
+  return await apiFunction(...args);
+}
+
+function showForceUpdateModal(message, serverVersion) {
+  // 创建一个全屏遮罩层，阻止所有操作
+  const overlay = document.createElement('div');
+  overlay.id = 'force-update-overlay';
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.9);
+    z-index: 10000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;
+  `;
+  
+  const modal = document.createElement('div');
+  modal.style.cssText = `
+    background: white;
+    padding: 40px;
+    border-radius: 12px;
+    max-width: 500px;
+    text-align: center;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  `;
+  
+  modal.innerHTML = `
+    <div style="font-size: 48px; margin-bottom: 20px;">⚠️</div>
+    <h2 style="color: #dc2626; margin: 0 0 15px 0; font-size: 24px;">需要更新</h2>
+    <p style="color: #4b5563; font-size: 16px; line-height: 1.6; margin-bottom: 20px;">
+      ${message}<br><br>
+      <strong>当前版本:</strong> ${CLIENT_VERSION}<br>
+      <strong>服务器版本:</strong> ${serverVersion}
+    </p>
+    <p style="color: #dc2626; font-size: 14px; font-weight: bold;">
+      请关闭应用并下载最新版本
+    </p>
+  `;
+  
+  overlay.appendChild(modal);
+  document.body.appendChild(overlay);
+  
+  // 禁用所有交互
+  document.body.style.pointerEvents = 'none';
+  overlay.style.pointerEvents = 'auto';
+  
+  log('❌ 版本过旧，需要更新！', 'error');
+}
+
 // ===== 初始化 =====
 
 document.addEventListener('DOMContentLoaded', () => {
   log('🎐 PaperCrane-Windsurf 已启动', 'success');
+  
+  // 首先检查版本
+  setTimeout(() => {
+    checkClientVersion();
+  }, 500);
   
   // 监听切换账号进度消息
   window.electronAPI.onSwitchProgress((data) => {
@@ -1180,6 +1454,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadKeyInfo(true);
   }, 60);
   setTimeout(() => {
+    loadWorkspacePath();
+  }, 90);
+  setTimeout(() => {
     updateWindsurfStatus();
   }, 120);
   // 启动时自动获取一次秘钥状态
@@ -1201,49 +1478,66 @@ document.addEventListener('DOMContentLoaded', () => {
     setInterval(updateWindsurfStatus, 3000);
   }, 1000);
   
+  // 定期版本检查（每 30 分钟），确保长时间运行时也能检测到版本更新
+  setTimeout(() => {
+    setInterval(() => {
+      checkClientVersion(true); // 强制检查，忽略间隔限制
+    }, 30 * 60 * 1000); // 30分钟
+  }, 5 * 60 * 1000); // 首次检查延后5分钟，避免与启动时检查冲突
+  
   // ===== 主页事件绑定 =====
   
   // 秘钥相关
-  document.getElementById('save-key-btn').addEventListener('click', saveKey);
-  document.getElementById('refresh-key-btn').addEventListener('click', checkKeyStatus);
-  document.getElementById('key-input').addEventListener('keypress', (e) => {
+  document.getElementById('save-key-btn')?.addEventListener('click', saveKey);
+  document.getElementById('refresh-key-btn')?.addEventListener('click', checkKeyStatus);
+  document.getElementById('key-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') saveKey();
   });
   
   // 账号信息
-  document.getElementById('refresh-btn').addEventListener('click', () => {
+  document.getElementById('refresh-btn')?.addEventListener('click', () => {
     displayCurrentAccount(true);
     updateWindsurfStatus();
   });
   
   // 路径检测
-  document.getElementById('detect-path-btn').addEventListener('click', scanWindsurfExecutable);
-  document.getElementById('select-path-btn').addEventListener('click', selectWindsurfPath);
+  document.getElementById('detect-path-btn')?.addEventListener('click', scanWindsurfExecutable);
+  document.getElementById('select-path-btn')?.addEventListener('click', selectWindsurfPath);
+  
+  // 工作区路径
+  document.getElementById('select-workspace-btn')?.addEventListener('click', selectWorkspacePath);
+  document.getElementById('clear-workspace-btn')?.addEventListener('click', clearWorkspacePath);
   
   // 快捷操作（主页）
-  document.getElementById('reset-device-btn').addEventListener('click', () => resetDeviceIds(false, 'home'));
-  document.getElementById('kill-windsurf-btn').addEventListener('click', killWindsurf);
-  document.getElementById('launch-windsurf-btn').addEventListener('click', launchWindsurf);
+  document.getElementById('reset-device-btn')?.addEventListener('click', () => resetDeviceIds(false, 'home'));
+  document.getElementById('kill-windsurf-btn')?.addEventListener('click', killWindsurf);
+  document.getElementById('launch-windsurf-btn')?.addEventListener('click', launchWindsurf);
+  document.getElementById('purchase-key-btn')?.addEventListener('click', showPurchaseModal);
+  document.getElementById('top-purchase-key-btn')?.addEventListener('click', showPurchaseModal);
   
   // ===== 账号管理页面事件绑定 =====
   
   // 快捷操作按钮
-  document.getElementById('manual-input-btn').addEventListener('click', showManualInputModal);
-  document.getElementById('one-click-switch-btn').addEventListener('click', oneClickSwitch);
-  document.getElementById('reset-device-switch-btn').addEventListener('click', () => resetDeviceIds(false, 'switch'));
+  document.getElementById('manual-input-btn')?.addEventListener('click', showManualInputModal);
+  document.getElementById('one-click-switch-btn')?.addEventListener('click', oneClickSwitch);
+  document.getElementById('reset-device-switch-btn')?.addEventListener('click', () => resetDeviceIds(false, 'switch'));
   
   // 手动输入弹窗
-  document.getElementById('manual-input-cancel').addEventListener('click', hideManualInputModal);
-  document.getElementById('manual-input-confirm').addEventListener('click', manualSwitchAccount);
+  document.getElementById('manual-input-cancel')?.addEventListener('click', hideManualInputModal);
+  document.getElementById('manual-input-confirm')?.addEventListener('click', manualSwitchAccount);
   
   // Enter 键提交
-  document.getElementById('modal-token-input').addEventListener('keypress', (e) => {
+  document.getElementById('modal-token-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') manualSwitchAccount();
   });
-  document.getElementById('modal-email-input').addEventListener('keypress', (e) => {
+  document.getElementById('modal-email-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') manualSwitchAccount();
   });
-  document.getElementById('modal-label-input').addEventListener('keypress', (e) => {
+  document.getElementById('modal-label-input')?.addEventListener('keypress', (e) => {
     if (e.key === 'Enter') manualSwitchAccount();
   });
+  
+  // ===== 购买卡密弹窗事件绑定 =====
+  document.getElementById('purchase-modal-close')?.addEventListener('click', hidePurchaseModal);
+  document.getElementById('open-purchase-link-btn')?.addEventListener('click', openPurchaseLink);
 });

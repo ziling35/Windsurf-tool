@@ -10,7 +10,7 @@ const path = require('path');
 // 配置 API 端点 - 可在此处统一修改
 const API_CONFIG = {
   // Base URL - 后端服务地址
-  BASE_URL: 'https://windsurf.zh8888.top/api/client',
+  BASE_URL: 'http://103.97.178.131:8000/api/client',
   
   // 超时时间（毫秒）
   TIMEOUT: 10000
@@ -152,6 +152,9 @@ class KeyManager {
     }
 
     try {
+      console.log('🔄 正在请求获取账号...');
+      console.log('📡 API地址:', API_CONFIG.BASE_URL + '/account/get');
+      
       const response = await axios.post(
         API_CONFIG.BASE_URL + '/account/get',
         {},
@@ -163,26 +166,63 @@ class KeyManager {
         }
       );
 
+      console.log('✅ 获取账号成功:', response.data);
       return {
         success: true,
         data: response.data
       };
     } catch (error) {
-      console.error('获取账号失败:', error);
+      console.error('❌ 获取账号失败 - 详细信息:');
+      console.error('错误类型:', error.name);
+      console.error('错误消息:', error.message);
+      console.error('错误代码:', error.code);
       
       let message = '获取账号失败';
+      let statusCode = null;
+      
       if (error.response) {
-        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
-      } else if (error.code === 'ECONNABORTED') {
-        message = '请求超时';
-      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
-        message = '无法连接到服务器';
+        // 服务器返回了响应
+        statusCode = error.response.status;
+        console.error('HTTP状态码:', statusCode);
+        console.error('响应数据:', JSON.stringify(error.response.data, null, 2));
+        console.error('响应头:', error.response.headers);
+        
+        // 提取详细错误信息
+        const errorData = error.response.data;
+        message = errorData?.detail || errorData?.message || errorData?.error || `服务器错误 (${statusCode})`;
+        
+        // 如果是对象格式的错误，尝试提取更多信息
+        if (typeof errorData === 'object' && errorData !== null) {
+          console.error('错误详情:', errorData);
+        }
+      } else if (error.request) {
+        // 请求已发出但未收到响应
+        console.error('未收到服务器响应');
+        console.error('请求配置:', error.config);
+        
+        if (error.code === 'ECONNABORTED') {
+          message = '请求超时，请检查网络连接';
+        } else if (error.code === 'ENOTFOUND') {
+          message = '无法连接到服务器 (DNS解析失败)';
+        } else if (error.code === 'ECONNREFUSED') {
+          message = '服务器拒绝连接';
+        } else if (error.code === 'ETIMEDOUT') {
+          message = '连接超时';
+        } else {
+          message = `网络错误: ${error.message}`;
+        }
+      } else {
+        // 请求配置错误
+        console.error('请求配置错误:', error.message);
+        message = `请求失败: ${error.message}`;
       }
 
       return {
         success: false,
         message: message,
-        statusCode: error.response?.status
+        statusCode: statusCode,
+        errorCode: error.code,
+        errorDetails: error.response?.data
       };
     }
   }
@@ -304,6 +344,46 @@ class KeyManager {
    */
   static getAPIConfig() {
     return { ...API_CONFIG };
+  }
+
+  /**
+   * 检查版本更新
+   * @param {string} clientVersion 客户端版本号
+   * @returns {Promise<Object>} 版本信息
+   */
+  static async checkVersion(clientVersion) {
+    try {
+      const response = await axios.get(
+        API_CONFIG.BASE_URL + '/version',
+        {
+          timeout: API_CONFIG.TIMEOUT,
+          params: {
+            client_version: clientVersion
+          }
+        }
+      );
+
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('检查版本失败:', error);
+      
+      let message = '检查版本失败';
+      if (error.response) {
+        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
+      return {
+        success: false,
+        message: message
+      };
+    }
   }
 }
 

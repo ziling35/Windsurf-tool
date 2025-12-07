@@ -13,7 +13,7 @@
     <!-- 左侧边栏 -->
     <aside class="sidebar">
       <div class="sidebar-header">
-        <h1>PaperCrane</h1>
+        <h1></h1>
       </div>
       <nav class="sidebar-nav">
         <a href="#" class="nav-item active" data-page="home">
@@ -30,7 +30,7 @@
         </a>
       </nav>
       <div class="sidebar-footer">
-        <div class="sidebar-version">v1.0.0</div>
+        <div class="sidebar-version">v1.0.1</div>
       </div>
     </aside>
 
@@ -38,8 +38,13 @@
     <main class="main-content">
       <!-- 主页 -->
       <div class="page active" id="page-home">
-        <div class="page-header">
+        <div class="page-header page-header-with-action">
           <h2>Windsurf 续杯工具</h2>
+          <button id="top-purchase-key-btn" class="header-purchase-btn">
+            <i data-lucide="shopping-cart"></i>
+            <span>购买密钥</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
         </div>
         
         <!-- 双列卡片容器 -->
@@ -123,6 +128,23 @@
           </div>
         </div>
 
+        <!-- 工作区路径 -->
+        <div class="info-card">
+          <h3>工作区路径</h3>
+          <div class="key-input-row">
+            <input type="text" id="workspace-path-input" class="key-input" placeholder="选择工作区文件夹（可选）" />
+            <button id="select-workspace-btn" class="btn btn-primary btn-small">
+              <i data-lucide="folder"></i>
+              <span>选择</span>
+            </button>
+            <button id="clear-workspace-btn" class="btn btn-secondary btn-small">
+              <i data-lucide="x"></i>
+              <span>清除</span>
+            </button>
+          </div>
+          <div class="help-text">设置后，启动 Windsurf 时会自动打开此工作区</div>
+        </div>
+
         <!-- 快捷操作 -->
         <div class="info-card">
           <h3>快捷操作</h3>
@@ -139,6 +161,10 @@
               <i data-lucide="play-circle"></i>
               <span>启动 Windsurf</span>
             </button>
+            <!-- <button id="purchase-key-btn" class="action-btn">
+              <i data-lucide="shopping-cart"></i>
+              <span>购买卡密</span>
+            </button> -->
           </div>
         </div>
       </div>
@@ -236,6 +262,31 @@
       <div class="modal-footer">
         <button id="modal-cancel" class="btn btn-secondary">取消</button>
         <button id="modal-confirm" class="btn btn-primary">确定</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 购买卡密弹窗 -->
+  <div id="purchase-modal" class="modal">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3>购买卡密</h3>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label>购买链接</label>
+          <div style="display: flex; gap: 10px; align-items: center;">
+            <input type="text" id="purchase-link-input" class="key-input" value="https://fk.ziling.site/" readonly style="flex: 1;">
+            <button id="open-purchase-link-btn" class="btn btn-primary btn-small">
+              <i data-lucide="external-link"></i>
+              <span>打开链接</span>
+            </button>
+          </div>
+          <small style="margin-top: 8px; display: block; color: #6b7280;">点击按钮在浏览器中打开购买页面</small>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button id="purchase-modal-close" class="btn btn-secondary">关闭</button>
       </div>
     </div>
   </div>

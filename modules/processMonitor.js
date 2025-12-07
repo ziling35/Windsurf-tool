@@ -96,23 +96,40 @@ class ProcessMonitor {
   /**
    * 启动 Windsurf
    * @param {string} exePath - Windsurf 可执行文件路径
+   * @param {string} workspacePath - 可选的工作区路径
    */
-  async launchWindsurf(exePath) {
+  async launchWindsurf(exePath, workspacePath = null) {
     try {
       if (!exePath) {
         throw new Error('未指定 Windsurf 路径');
       }
 
+      let command;
       if (this.platform === 'win32') {
         // Windows: 使用 start
-        await execPromise(`start "" "${exePath}"`);
+        if (workspacePath) {
+          command = `start "" "${exePath}" "${workspacePath}"`;
+        } else {
+          command = `start "" "${exePath}"`;
+        }
       } else if (this.platform === 'darwin') {
         // macOS: 使用 open
-        await execPromise(`open "${exePath}"`);
+        if (workspacePath) {
+          command = `open "${exePath}" --args "${workspacePath}"`;
+        } else {
+          command = `open "${exePath}"`;
+        }
       } else {
         // Linux: 直接执行
-        await execPromise(`"${exePath}" &`);
+        if (workspacePath) {
+          command = `"${exePath}" "${workspacePath}" &`;
+        } else {
+          command = `"${exePath}" &`;
+        }
       }
+      
+      await execPromise(command);
+      console.log(`✅ 已启动 Windsurf${workspacePath ? `（工作区: ${workspacePath}）` : ''}`);
       return true;
     } catch (error) {
       console.error('启动 Windsurf 失败:', error);

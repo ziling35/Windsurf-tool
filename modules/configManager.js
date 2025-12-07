@@ -32,6 +32,7 @@ class ConfigManager {
       windsurfExePath: null, // 可执行文件路径
       label: 'PaperCrane', // 默认标签
       lastEmail: null,
+      lastWorkspacePath: null, // 最后使用的工作区路径
       lastUpdated: null
     };
   }
@@ -113,6 +114,21 @@ class ConfigManager {
    */
   setWindsurfExePath(exePath) {
     this.config.windsurfExePath = exePath;
+    return this.saveConfig();
+  }
+
+  /**
+   * 获取最后使用的工作区路径
+   */
+  getLastWorkspacePath() {
+    return this.config.lastWorkspacePath;
+  }
+
+  /**
+   * 设置最后使用的工作区路径
+   */
+  setLastWorkspacePath(workspacePath) {
+    this.config.lastWorkspacePath = workspacePath;
     return this.saveConfig();
   }
 

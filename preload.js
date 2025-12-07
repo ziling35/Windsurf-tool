@@ -34,12 +34,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   killWindsurf: () => ipcRenderer.invoke('kill-windsurf'),
   
   // 启动 Windsurf
-  launchWindsurf: () => ipcRenderer.invoke('launch-windsurf'),
+  launchWindsurf: (options) => ipcRenderer.invoke('launch-windsurf', options),
   
   // 监听切换账号进度消息
   onSwitchProgress: (callback) => {
     ipcRenderer.on('switch-progress', (event, data) => callback(data));
   },
+
+  // 版本控制
+  checkVersion: (clientVersion) => ipcRenderer.invoke('check-version', clientVersion),
+  
+  // 工作区管理
+  saveWorkspacePath: (workspacePath) => ipcRenderer.invoke('save-workspace-path', workspacePath),
+  getWorkspacePath: () => ipcRenderer.invoke('get-workspace-path'),
+  selectWorkspacePath: () => ipcRenderer.invoke('select-workspace-path'),
 
   // ===== 秘钥管理 API =====
   
@@ -67,5 +75,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   deleteAccount: (id) => ipcRenderer.invoke('delete-account', id),
   
   // 切换到历史账号
-  switchToHistoryAccount: (id) => ipcRenderer.invoke('switch-to-history-account', id)
+  switchToHistoryAccount: (id) => ipcRenderer.invoke('switch-to-history-account', id),
+  
+  // 打开外部链接
+  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url)
 });
