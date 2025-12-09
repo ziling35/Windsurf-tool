@@ -59,6 +59,52 @@ body {
   text-align: center;
 }
 
+/* 侧边栏公告样式 */
+.sidebar-announcement {
+  margin: 12px 16px;
+  padding: 12px;
+  background: linear-gradient(135deg, #dbeafe 0%, #bfdbfe 100%);
+  border: 1px solid #93c5fd;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.3s;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.08);
+}
+
+.sidebar-announcement:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+  background: linear-gradient(135deg, #bfdbfe 0%, #93c5fd 100%);
+}
+
+.sidebar-announcement-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #1e40af;
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+
+.sidebar-announcement-header i {
+  width: 14px;
+  height: 14px;
+  stroke-width: 2.5;
+}
+
+.sidebar-announcement-content {
+  color: #1e3a8a;
+  font-size: 12px;
+  line-height: 1.6;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  word-wrap: break-word;
+}
+
 .sidebar-nav {
   flex: 1;
   padding: 20px 0;
@@ -163,7 +209,7 @@ body {
   justify-content: center;
   gap: 8px;
   padding: 12px 24px;
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   color: white;
   border: none;
   border-radius: 10px;
@@ -172,7 +218,7 @@ body {
   font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;
   cursor: pointer;
   transition: all 0.3s ease;
-  box-shadow: 0 3px 15px rgba(102, 126, 234, 0.35);
+  box-shadow: 0 3px 15px rgba(59, 130, 246, 0.25);
   position: relative;
   overflow: hidden;
   flex-shrink: 0;
@@ -196,13 +242,13 @@ body {
 
 .header-purchase-btn:hover {
   transform: translateY(-2px);
-  box-shadow: 0 5px 25px rgba(102, 126, 234, 0.5);
-  background: linear-gradient(135deg, #5568d3 0%, #6941a0 100%);
+  box-shadow: 0 5px 25px rgba(59, 130, 246, 0.4);
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
 }
 
 .header-purchase-btn:active {
   transform: translateY(0);
-  box-shadow: 0 2px 12px rgba(102, 126, 234, 0.4);
+  box-shadow: 0 2px 12px rgba(59, 130, 246, 0.3);
 }
 
 .header-purchase-btn i,
@@ -211,6 +257,7 @@ body {
   height: 18px;
   stroke-width: 2.5;
   flex-shrink: 0;
+  display: block;
 }
 
 .header-purchase-btn span {
@@ -318,7 +365,6 @@ body {
 .status-row:first-child {
   padding-top: 0;
 }
-
 
 .status-label {
   flex: 0 0 88px;
@@ -570,9 +616,9 @@ body {
   color: #276749;
 }
 
-/* 购买卡密 - 紫色渐变 */
+/* 购买卡密 - 蓝色渐变 */
 #purchase-key-btn {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   border: none;
   color: white;
 }
@@ -582,10 +628,10 @@ body {
 }
 
 #purchase-key-btn:hover {
-  background: linear-gradient(135deg, #5568d3 0%, #6941a0 100%);
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
   border: none;
   color: white;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
 }
 
 #purchase-key-btn:hover i {
@@ -767,6 +813,37 @@ i[data-lucide] {
   transform: none;
 }
 
+/* 内联图标按钮（如密钥输入框内的眼睛图标） */
+.icon-btn-inline {
+  position: absolute;
+  right: 4px;
+  width: 28px;
+  height: 28px;
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.icon-btn-inline:hover {
+  background: #f0f4f8;
+  transform: none;
+  box-shadow: none;
+}
+
+.icon-btn-inline:active {
+  background: #e2e8f0;
+}
+
+.icon-btn-inline i,
+.icon-btn-inline .lucide {
+  color: #718096;
+}
+
+.icon-btn-inline:hover i,
+.icon-btn-inline:hover .lucide {
+  color: #3b82f6;
+}
+
 /* 日志输出 */
 #log-output {
   background: #1a202c;
@@ -904,6 +981,12 @@ i[data-lucide] {
   color: #4a5568;
   line-height: 1.6;
   margin: 0;
+  word-wrap: break-word;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  white-space: pre-wrap;
+  max-height: 400px;
+  overflow-y: auto;
 }
 
 .modal-footer {
@@ -1096,10 +1179,17 @@ i[data-lucide] {
   margin-bottom: 16px;
 }
 
-.key-input {
+.key-input-wrapper {
+  position: relative;
   flex: 1;
   max-width: 200px;
-  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+}
+
+.key-input {
+  flex: 1;
+  padding: 8px 40px 8px 12px;
   border: 1px solid #e8ecf1;
   border-radius: 8px;
   font-size: 0.95em;
@@ -1107,6 +1197,7 @@ i[data-lucide] {
   transition: all 0.2s;
   background: white;
   height: 38px;
+  width: 100%;
 }
 
 .key-input:hover {
@@ -1449,17 +1540,17 @@ i[data-lucide] {
   margin-bottom: 0;
 }
 
-/* 公告区域样式 */
+/* 公告区域样式 - 已移至侧边栏，保留用于兼容 */
 .announcement-container {
   margin-bottom: 24px;
   animation: slideDown 0.3s ease-out;
 }
 
 .announcement-card {
-  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
   border-radius: 12px;
   padding: 20px 24px;
-  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
   position: relative;
   overflow: hidden;
 }

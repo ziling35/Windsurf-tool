@@ -3,7 +3,7 @@
  */
 
 // 当前客户端版本号
-const CLIENT_VERSION = '1.0.1';
+const CLIENT_VERSION = '1.0.2';
 
 // 版本检查相关
 let lastVersionCheck = 0; // 上次版本检查时间戳
@@ -68,8 +68,9 @@ function showModal(title, message) {
     const cancelBtn = document.getElementById('modal-cancel');
     
     modalTitle.textContent = title;
-    // 支持多行：将 "\n" 渲染为 HTML 换行
-    modalMessage.innerHTML = (message || '').replace(/\n/g, '<br>');
+    // 使用 <p> 标签包裹，支持长文本换行和滚动
+    const formattedMessage = (message || '').replace(/\n/g, '<br>');
+    modalMessage.innerHTML = `<p>${formattedMessage}</p>`;
     modal.classList.add('show');
     
     const handleConfirm = () => {
@@ -1282,36 +1283,80 @@ async function loadAnnouncement() {
   }
 }
 
-// 显示公告内容
+// 公告轮播状态
+let announcementPages = [];
+let currentAnnouncementIndex = 0;
+let announcementInterval = null;
+
+// 显示公告内容（显示在侧边栏，支持轮播）
 function displayAnnouncement(data) {
-  const container = document.getElementById('announcement-container');
-  const content = document.getElementById('announcement-content');
-  const footer = document.getElementById('announcement-footer');
-  const time = document.getElementById('announcement-time');
+  // 侧边栏公告元素
+  const sidebarContainer = document.getElementById('sidebar-announcement');
+  const sidebarContent = document.getElementById('sidebar-announcement-content');
   
-  if (!container || !content) return;
-  
-  // 设置公告内容
-  content.textContent = data.content;
-  
-  // 设置时间（如果有）
-  if (data.updated_at || data.created_at) {
-    const dateStr = data.updated_at || data.created_at;
-    const date = new Date(dateStr);
-    const formattedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
-    time.textContent = `发布时间: ${formattedDate}`;
-    footer.style.display = 'block';
-  } else {
-    footer.style.display = 'none';
+  if (sidebarContainer && sidebarContent) {
+    // 将公告按段落分割（支持多种分隔符）
+    const content = data.content || '';
+    // 按双换行、分隔线、数字序号等分割
+    announcementPages = content
+      .split(/(?:\n\s*\n|\r\n\s*\r\n|---|\u2014\u2014\u2014|\d+\.\s)/)
+      .map(p => p.trim())
+      .filter(p => p.length > 0);
+    
+    // 如果只有一段，直接显示
+    if (announcementPages.length <= 1) {
+      announcementPages = [content];
+      sidebarContent.textContent = content;
+    } else {
+      // 多段公告，启动轮播
+      currentAnnouncementIndex = 0;
+      sidebarContent.textContent = announcementPages[0];
+      startAnnouncementCarousel();
+    }
+    
+    // 显示侧边栏公告
+    sidebarContainer.style.display = 'block';
+    
+    // 点击侧边栏公告时显示完整内容
+    sidebarContainer.onclick = () => {
+      showModal('系统公告', data.content);
+    };
+    
+    // 重新渲染图标
+    try { lucide.createIcons(); } catch (e) {}
+    
+    log('📢 已加载系统公告' + (announcementPages.length > 1 ? ` (共${announcementPages.length}条)` : ''), 'info');
+  }
+}
+
+// 启动公告轮播
+function startAnnouncementCarousel() {
+  // 清除旧的轮播定时器
+  if (announcementInterval) {
+    clearInterval(announcementInterval);
   }
   
-  // 显示公告容器
-  container.style.display = 'block';
-  
-  // 重新渲染图标
-  try { lucide.createIcons(); } catch (e) {}
-  
-  log('📢 已加载系统公告', 'info');
+  // 每 4 秒切换一次
+  announcementInterval = setInterval(() => {
+    const sidebarContent = document.getElementById('sidebar-announcement-content');
+    if (!sidebarContent || announcementPages.length <= 1) {
+      clearInterval(announcementInterval);
+      return;
+    }
+    
+    // 淡出效果
+    sidebarContent.style.opacity = '0';
+    sidebarContent.style.transition = 'opacity 0.3s';
+    
+    setTimeout(() => {
+      // 切换到下一条
+      currentAnnouncementIndex = (currentAnnouncementIndex + 1) % announcementPages.length;
+      sidebarContent.textContent = announcementPages[currentAnnouncementIndex];
+      
+      // 淡入效果
+      sidebarContent.style.opacity = '1';
+    }, 300);
+  }, 4000); // 4秒切换
 }
 
 // 关闭公告
@@ -1472,6 +1517,12 @@ function showForceUpdateModal(message, serverVersion) {
 document.addEventListener('DOMContentLoaded', () => {
   log('🎐 PaperCrane-Windsurf 已启动', 'success');
   
+  // 动态设置版本号显示
+  const versionElement = document.querySelector('.sidebar-version');
+  if (versionElement) {
+    versionElement.textContent = `v${CLIENT_VERSION}`;
+  }
+  
   // 首先检查版本
   setTimeout(() => {
     checkClientVersion();
@@ -1548,6 +1599,13 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     loadAnnouncement();
   }, 300);
+  
+  // 页面卸载时清理轮播定时器
+  window.addEventListener('beforeunload', () => {
+    if (announcementInterval) {
+      clearInterval(announcementInterval);
+    }
+  });
   // Mac 权限检查（仅在 macOS 上执行）
   if (navigator.platform.toLowerCase().includes('mac')) {
     setTimeout(() => {
@@ -1576,6 +1634,24 @@ document.addEventListener('DOMContentLoaded', () => {
     if (e.key === 'Enter') saveKey();
   });
   
+  // 密钥显示/隐藏切换
+  document.getElementById('toggle-key-visibility')?.addEventListener('click', () => {
+    const keyInput = document.getElementById('key-input');
+    const toggleBtn = document.getElementById('toggle-key-visibility');
+    const icon = toggleBtn.querySelector('i');
+    
+    if (keyInput.type === 'password') {
+      keyInput.type = 'text';
+      icon.setAttribute('data-lucide', 'eye');
+    } else {
+      keyInput.type = 'password';
+      icon.setAttribute('data-lucide', 'eye-off');
+    }
+    
+    // 重新渲染图标
+    try { lucide.createIcons(); } catch (e) {}
+  });
+  
   // 账号信息
   document.getElementById('refresh-btn')?.addEventListener('click', () => {
     displayCurrentAccount(true);
@@ -1594,8 +1670,13 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('reset-device-btn')?.addEventListener('click', () => resetDeviceIds(false, 'home'));
   document.getElementById('kill-windsurf-btn')?.addEventListener('click', killWindsurf);
   document.getElementById('launch-windsurf-btn')?.addEventListener('click', launchWindsurf);
+  // 为所有购买按钮添加事件监听
   document.getElementById('purchase-key-btn')?.addEventListener('click', showPurchaseModal);
   document.getElementById('top-purchase-key-btn')?.addEventListener('click', showPurchaseModal);
+  // 为其他页面的购买按钮添加事件监听（使用 data-purchase-trigger 属性）
+  document.querySelectorAll('[data-purchase-trigger]').forEach(btn => {
+    btn.addEventListener('click', showPurchaseModal);
+  });
   
   // ===== 账号管理页面事件绑定 =====
   
@@ -1623,6 +1704,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('purchase-modal-close')?.addEventListener('click', hidePurchaseModal);
   document.getElementById('open-purchase-link-btn')?.addEventListener('click', openPurchaseLink);
   
-  // ===== 公告关闭按钮 =====
+  // ===== 公告关闭按钮（保留用于兼容） =====
   document.getElementById('close-announcement-btn')?.addEventListener('click', closeAnnouncement);
 });

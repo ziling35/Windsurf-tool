@@ -29,8 +29,18 @@
           <span class="nav-text">日志</span>
         </a>
       </nav>
+      <!-- 侧边栏公告 -->
+      <div class="sidebar-announcement" id="sidebar-announcement" style="display: none;">
+        <div class="sidebar-announcement-header">
+          <i data-lucide="megaphone"></i>
+          <span>公告</span>
+        </div>
+        <div class="sidebar-announcement-content" id="sidebar-announcement-content">
+          加载中...
+        </div>
+      </div>
       <div class="sidebar-footer">
-        <div class="sidebar-version">v1.0.1</div>
+        <div class="sidebar-version">v1.0.2</div>
       </div>
     </aside>
 
@@ -47,8 +57,8 @@
           </button>
         </div>
 
-        <!-- 公告区域 -->
-        <div class="announcement-container" id="announcement-container" style="display: none;">
+        <!-- 公告区域（已移至侧边栏，此处保留用于兼容但默认隐藏） -->
+        <div class="announcement-container" id="announcement-container" style="display: none !important;">
           <div class="announcement-card">
             <div class="announcement-header">
               <div class="announcement-title">
@@ -80,7 +90,12 @@
             </div>
             <div class="key-section">
               <div class="key-input-row">
-                <input type="password" id="key-input" class="key-input" placeholder="请输入激活秘钥" />
+                <div class="key-input-wrapper">
+                  <input type="password" id="key-input" class="key-input" placeholder="请输入激活秘钥" />
+                  <button id="toggle-key-visibility" class="icon-btn icon-btn-inline" title="显示/隐藏密钥">
+                    <i data-lucide="eye-off"></i>
+                  </button>
+                </div>
                 <button id="save-key-btn" class="btn btn-primary btn-small">
                   <i data-lucide="save"></i>
                   <span>保存</span>
@@ -192,8 +207,13 @@
 
       <!-- 账号管理页面 -->
       <div class="page" id="page-switch">
-        <div class="page-header">
+        <div class="page-header page-header-with-action">
           <h2>账号管理</h2>
+          <button class="header-purchase-btn" data-purchase-trigger>
+            <i data-lucide="shopping-cart"></i>
+            <span>购买密钥</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
         </div>
         
         <!-- 快捷操作按钮 -->
@@ -262,8 +282,13 @@
 
       <!-- 日志页面 -->
       <div class="page" id="page-logs">
-        <div class="page-header">
+        <div class="page-header page-header-with-action">
           <h2>操作日志</h2>
+          <button class="header-purchase-btn" data-purchase-trigger>
+            <i data-lucide="shopping-cart"></i>
+            <span>购买密钥</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
         </div>
         
         <div id="log-output"></div>
