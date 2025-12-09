@@ -10,7 +10,7 @@ const path = require('path');
 // 配置 API 端点 - 可在此处统一修改
 const API_CONFIG = {
   // Base URL - 后端服务地址
-  BASE_URL: 'http://103.97.178.131:8000/api/client',
+  BASE_URL: 'http://103.97.178.131:8010/api/client',
   
   // 超时时间（毫秒）
   TIMEOUT: 10000
@@ -371,6 +371,42 @@ class KeyManager {
       console.error('检查版本失败:', error);
       
       let message = '检查版本失败';
+      if (error.response) {
+        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
+      return {
+        success: false,
+        message: message
+      };
+    }
+  }
+
+  /**
+   * 获取公告信息
+   * @returns {Promise<Object>} 公告信息
+   */
+  static async getAnnouncement() {
+    try {
+      const response = await axios.get(
+        API_CONFIG.BASE_URL + '/announcement',
+        {
+          timeout: API_CONFIG.TIMEOUT
+        }
+      );
+
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('获取公告失败:', error);
+      
+      let message = '获取公告失败';
       if (error.response) {
         message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
       } else if (error.code === 'ECONNABORTED') {

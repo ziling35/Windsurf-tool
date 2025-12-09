@@ -1245,6 +1245,84 @@ async function openPurchaseLink() {
   }
 }
 
+// ===== 公告功能 =====
+
+// 获取并显示公告
+async function loadAnnouncement() {
+  try {
+    const result = await window.electronAPI.getAnnouncement();
+    
+    if (result && result.success && result.data) {
+      const announcementData = result.data;
+      
+      // 检查是否有公告内容
+      if (announcementData.content && announcementData.content.trim()) {
+        displayAnnouncement(announcementData);
+      } else {
+        // 没有公告内容，隐藏公告区域
+        const container = document.getElementById('announcement-container');
+        if (container) {
+          container.style.display = 'none';
+        }
+      }
+    } else {
+      // 获取失败，隐藏公告区域
+      const container = document.getElementById('announcement-container');
+      if (container) {
+        container.style.display = 'none';
+      }
+      log('获取公告失败，可能服务器未配置公告', 'info');
+    }
+  } catch (error) {
+    console.error('获取公告异常:', error);
+    const container = document.getElementById('announcement-container');
+    if (container) {
+      container.style.display = 'none';
+    }
+  }
+}
+
+// 显示公告内容
+function displayAnnouncement(data) {
+  const container = document.getElementById('announcement-container');
+  const content = document.getElementById('announcement-content');
+  const footer = document.getElementById('announcement-footer');
+  const time = document.getElementById('announcement-time');
+  
+  if (!container || !content) return;
+  
+  // 设置公告内容
+  content.textContent = data.content;
+  
+  // 设置时间（如果有）
+  if (data.updated_at || data.created_at) {
+    const dateStr = data.updated_at || data.created_at;
+    const date = new Date(dateStr);
+    const formattedDate = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
+    time.textContent = `发布时间: ${formattedDate}`;
+    footer.style.display = 'block';
+  } else {
+    footer.style.display = 'none';
+  }
+  
+  // 显示公告容器
+  container.style.display = 'block';
+  
+  // 重新渲染图标
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('📢 已加载系统公告', 'info');
+}
+
+// 关闭公告
+function closeAnnouncement() {
+  const container = document.getElementById('announcement-container');
+  if (container) {
+    container.style.display = 'none';
+  }
+  log('已关闭公告', 'info');
+}
+
 // ===== 导航功能 =====
 
 function initNavigation() {
@@ -1466,6 +1544,10 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     displayCurrentAccount();
   }, 180);
+  // 获取公告
+  setTimeout(() => {
+    loadAnnouncement();
+  }, 300);
   // Mac 权限检查（仅在 macOS 上执行）
   if (navigator.platform.toLowerCase().includes('mac')) {
     setTimeout(() => {
@@ -1540,4 +1622,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // ===== 购买卡密弹窗事件绑定 =====
   document.getElementById('purchase-modal-close')?.addEventListener('click', hidePurchaseModal);
   document.getElementById('open-purchase-link-btn')?.addEventListener('click', openPurchaseLink);
+  
+  // ===== 公告关闭按钮 =====
+  document.getElementById('close-announcement-btn')?.addEventListener('click', closeAnnouncement);
 });

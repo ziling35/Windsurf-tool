@@ -923,49 +923,47 @@ i[data-lucide] {
   top: 20px;
   right: 20px;
   z-index: 10000;
+  pointer-events: none;
   display: flex;
   flex-direction: column;
   gap: 10px;
-  pointer-events: none;
 }
 
 .toast {
-  min-width: 280px;
-  max-width: 400px;
-  padding: 16px 20px;
-  background: white;
-  border-radius: 12px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.15);
   display: flex;
   align-items: center;
   gap: 12px;
-  opacity: 0;
-  transform: translateX(400px);
-  animation: toast-slide-in 0.3s ease forwards;
+  padding: 12px 16px;
+  background: #ffffff;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  min-width: 300px;
+  max-width: 400px;
   pointer-events: auto;
-  border-left: 4px solid;
+  animation: toast-slide-in 0.3s ease forwards;
+  border-left: 4px solid #3b82f6;
 }
 
-.toast.toast-success {
+.toast-success {
   border-left-color: #10b981;
 }
 
-.toast.toast-error {
+.toast-error {
   border-left-color: #ef4444;
 }
 
-.toast.toast-info {
-  border-left-color: #3b82f6;
+.toast-warning {
+  border-left-color: #f59e0b;
 }
 
-.toast.toast-warning {
-  border-left-color: #f59e0b;
+.toast-info {
+  border-left-color: #3b82f6;
 }
 
 .toast-icon {
   flex-shrink: 0;
-  width: 24px;
-  height: 24px;
+  width: 20px;
+  height: 20px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -979,36 +977,78 @@ i[data-lucide] {
   color: #ef4444;
 }
 
-.toast-info .toast-icon {
-  color: #3b82f6;
-}
-
 .toast-warning .toast-icon {
   color: #f59e0b;
 }
 
+.toast-info .toast-icon {
+  color: #3b82f6;
+}
+
+.toast-icon i {
+  width: 20px;
+  height: 20px;
+}
+
 .toast-content {
   flex: 1;
-  font-size: 0.95em;
-  color: #2d3748;
+  font-size: 14px;
+  color: #374151;
   line-height: 1.5;
-  word-break: break-word;
 }
 
 .toast-close {
   flex-shrink: 0;
-  width: 20px;
-  height: 20px;
-  border: none;
-  background: transparent;
-  color: #9ca3af;
-  cursor: pointer;
+  width: 24px;
+  height: 24px;
   display: flex;
   align-items: center;
   justify-content: center;
+  background: transparent;
+  border: none;
   border-radius: 4px;
+  cursor: pointer;
+  color: #9ca3af;
   transition: all 0.2s;
   padding: 0;
+}
+
+.announcement-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 12px;
+  position: relative;
+  z-index: 1;
+}
+
+.announcement-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: #ffffff;
+  font-weight: 600;
+  font-size: 16px;
+}
+
+.announcement-title i {
+  width: 20px;
+  height: 20px;
+  stroke-width: 2.5;
+}
+
+.announcement-close {
+  background: rgba(255, 255, 255, 0.2);
+  border: none;
+  border-radius: 6px;
+  width: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #ffffff;
 }
 
 .toast-close:hover {
@@ -1407,4 +1447,76 @@ i[data-lucide] {
 
 #manual-input-modal .form-group:last-of-type {
   margin-bottom: 0;
+}
+
+/* 公告区域样式 */
+.announcement-container {
+  margin-bottom: 24px;
+  animation: slideDown 0.3s ease-out;
+}
+
+.announcement-card {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  border-radius: 12px;
+  padding: 20px 24px;
+  box-shadow: 0 4px 12px rgba(102, 126, 234, 0.2);
+  position: relative;
+  overflow: hidden;
+}
+
+.announcement-card::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: linear-gradient(45deg, rgba(255, 255, 255, 0.1) 25%, transparent 25%, transparent 50%, rgba(255, 255, 255, 0.1) 50%, rgba(255, 255, 255, 0.1) 75%, transparent 75%, transparent);
+  background-size: 50px 50px;
+  opacity: 0.3;
+  pointer-events: none;
+}
+
+.announcement-close:hover {
+  background: rgba(255, 255, 255, 0.3);
+  transform: scale(1.1);
+}
+
+.announcement-close i {
+  width: 16px;
+  height: 16px;
+}
+
+.announcement-content {
+  color: #ffffff;
+  font-size: 14px;
+  line-height: 1.8;
+  position: relative;
+  z-index: 1;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+.announcement-footer {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(255, 255, 255, 0.2);
+  position: relative;
+  z-index: 1;
+}
+
+.announcement-time {
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 12px;
+}
+
+@keyframes slideDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

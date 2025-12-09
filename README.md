@@ -106,6 +106,28 @@ npm run build:mac   # macOS
 npm run build:linux # Linux
 ```
 
+### 跨平台构建
+
+**在 Windows 上构建 macOS 包**
+
+由于 electron-builder 的限制,在 Windows 上构建 macOS 包有以下方案:
+
+1. **使用 GitHub Actions (推荐)**
+   - 提交代码到 GitHub
+   - 使用 GitHub Actions 自动构建所有平台
+
+2. **使用 Docker**
+   ```bash
+   npm run build:mac:docker
+   ```
+   需要先安装 Docker Desktop
+
+3. **使用云服务器**
+   - 租用 macOS 云服务器
+   - 在服务器上执行构建
+
+**注意**: 当前配置已禁用代码签名,生成的 macOS 包可以正常使用,但用户首次打开时需要在"系统偏好设置 > 安全性与隐私"中允许运行。
+
 ## 📂 项目结构
 
 ```

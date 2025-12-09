@@ -78,5 +78,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   switchToHistoryAccount: (id) => ipcRenderer.invoke('switch-to-history-account', id),
   
   // 打开外部链接
-  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url)
+  openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
+  
+  // 获取公告
+  getAnnouncement: () => ipcRenderer.invoke('get-announcement')
 });

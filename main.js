@@ -1078,6 +1078,17 @@ ipcMain.handle('open-external-url', async (event, url) => {
   }
 });
 
+// 获取公告
+ipcMain.handle('get-announcement', async () => {
+  try {
+    const result = await KeyManager.getAnnouncement();
+    return result;
+  } catch (error) {
+    console.error('获取公告失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // ===== App 生命周期 =====
 
 app.whenReady().then(async () => {
