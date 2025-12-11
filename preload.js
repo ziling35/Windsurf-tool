@@ -81,5 +81,43 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openExternalUrl: (url) => ipcRenderer.invoke('open-external-url', url),
   
   // 获取公告
-  getAnnouncement: () => ipcRenderer.invoke('get-announcement')
+  getAnnouncement: () => ipcRenderer.invoke('get-announcement'),
+  
+  // ===== 插件管理 API =====
+  
+  // 检测插件状态
+  checkPluginStatus: () => ipcRenderer.invoke('check-plugin-status'),
+  
+  // 安装插件
+  installPlugin: () => ipcRenderer.invoke('install-plugin'),
+  
+  // 激活插件
+  activatePlugin: () => ipcRenderer.invoke('activate-plugin'),
+  
+  // 配置 MCP
+  configureMCP: () => ipcRenderer.invoke('configure-mcp'),
+  
+  // 清除 Windsurf 缓存
+  clearWindsurfCache: () => ipcRenderer.invoke('clear-windsurf-cache'),
+  
+  // 清除插件激活缓存（专门解决激活问题）
+  clearPluginActivationCache: () => ipcRenderer.invoke('clear-plugin-activation-cache'),
+  
+  // 重置 MCP 配置（修复路径乱码）
+  resetMCPConfig: () => ipcRenderer.invoke('reset-mcp-config'),
+  
+  // 安装 AI 规则（强制 AI 使用工具）
+  installAIRules: () => ipcRenderer.invoke('install-ai-rules'),
+  
+  // 配置 Kiro MCP
+  configureKiroMCP: (options) => ipcRenderer.invoke('configure-kiro-mcp', options),
+  
+  // 安装插件到 Kiro
+  installPluginToKiro: () => ipcRenderer.invoke('install-plugin-to-kiro'),
+  
+  // 选择文件夹
+  selectFolder: () => ipcRenderer.invoke('select-folder'),
+  
+  // 选择文件
+  selectFile: (options) => ipcRenderer.invoke('select-file', options)
 });

@@ -1246,6 +1246,622 @@ async function openPurchaseLink() {
   }
 }
 
+// ===== 插件管理功能 =====
+
+// 检测插件状态
+async function checkPluginStatus() {
+  const statusBadge = document.getElementById('plugin-status-badge');
+  const installedIcon = document.getElementById('plugin-installed-icon');
+  const installedText = document.getElementById('plugin-installed-text');
+  const mcpIcon = document.getElementById('mcp-configured-icon');
+  const mcpText = document.getElementById('mcp-configured-text');
+  const installBtn = document.getElementById('install-plugin-btn');
+  const activateBtn = document.getElementById('activate-plugin-btn');
+  const configureBtn = document.getElementById('configure-mcp-btn');
+  
+  // 显示检测中状态
+  statusBadge.innerHTML = '<i data-lucide="loader" style="width: 14px; height: 14px; margin-right: 4px;"></i><span>检测中...</span>';
+  statusBadge.style.background = '#e5e7eb';
+  statusBadge.style.color = '#6b7280';
+  
+  try {
+    const result = await window.electronAPI.checkPluginStatus();
+    
+    if (!result.success) {
+      showToast(`检测失败: ${result.message}`, 'error');
+      return;
+    }
+    
+    const { pluginInstalled, mcpConfigured } = result.data;
+    
+    // 更新安装状态 - 按钮始终可用，支持重新安装
+    if (pluginInstalled) {
+      installedIcon.setAttribute('data-lucide', 'check-circle');
+      installedIcon.style.color = '#10b981';
+      installedText.textContent = '插件已安装';
+      installedText.style.color = '#10b981';
+      
+      // 已安装时显示"重新安装"，但按钮仍可用
+      installBtn.disabled = false;
+      installBtn.innerHTML = '<i data-lucide="refresh-cw"></i><span>重新安装</span>';
+      
+      // 插件已安装，启用激活按钮
+      activateBtn.disabled = false;
+    } else {
+      installedIcon.setAttribute('data-lucide', 'x-circle');
+      installedIcon.style.color = '#ef4444';
+      installedText.textContent = '插件未安装';
+      installedText.style.color = '#ef4444';
+      
+      installBtn.disabled = false;
+      installBtn.innerHTML = '<i data-lucide="download"></i><span>一键安装</span>';
+      
+      // 插件未安装，但激活按钮也可用（会提示先安装）
+      activateBtn.disabled = false;
+    }
+    
+    // 更新 MCP 配置状态 - 按钮始终可用，支持重新配置
+    if (mcpConfigured) {
+      mcpIcon.setAttribute('data-lucide', 'check-circle');
+      mcpIcon.style.color = '#10b981';
+      mcpText.textContent = 'MCP 已配置';
+      mcpText.style.color = '#10b981';
+      
+      // 已配置时显示"重新配置"，但按钮仍可用
+      configureBtn.disabled = false;
+      configureBtn.innerHTML = '<i data-lucide="refresh-cw"></i><span>重新配置</span>';
+    } else {
+      mcpIcon.setAttribute('data-lucide', 'x-circle');
+      mcpIcon.style.color = '#ef4444';
+      mcpText.textContent = 'MCP 未配置';
+      mcpText.style.color = '#ef4444';
+      
+      configureBtn.disabled = false;
+      configureBtn.innerHTML = '<i data-lucide="settings"></i><span>配置 MCP</span>';
+    }
+    
+    // 更新整体状态徽章
+    if (pluginInstalled && mcpConfigured) {
+      statusBadge.innerHTML = '<i data-lucide="check-circle" style="width: 14px; height: 14px; margin-right: 4px;"></i><span>已就绪</span>';
+      statusBadge.style.background = '#d1fae5';
+      statusBadge.style.color = '#065f46';
+    } else if (pluginInstalled) {
+      statusBadge.innerHTML = '<i data-lucide="alert-circle" style="width: 14px; height: 14px; margin-right: 4px;"></i><span>需配置</span>';
+      statusBadge.style.background = '#fef3c7';
+      statusBadge.style.color = '#92400e';
+    } else {
+      statusBadge.innerHTML = '<i data-lucide="x-circle" style="width: 14px; height: 14px; margin-right: 4px;"></i><span>未安装</span>';
+      statusBadge.style.background = '#fee2e2';
+      statusBadge.style.color = '#991b1b';
+    }
+    
+    // 重新渲染图标
+    try { lucide.createIcons(); } catch (e) {}
+    
+  } catch (error) {
+    showToast(`检测失败: ${error.message}`, 'error');
+    log(`❌ 检测插件状态失败: ${error.message}`, 'error');
+  }
+}
+
+// 安装插件（自动关闭 Windsurf、清除缓存、配置 MCP）
+async function installPlugin() {
+  const btn = document.getElementById('install-plugin-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>安装中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始安装插件...', 'info');
+  showToast('正在安装插件，请稍候...', 'info');
+  
+  try {
+    const result = await window.electronAPI.installPlugin();
+    
+    if (result.success) {
+      showToast('插件安装成功！', 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 刷新状态
+      setTimeout(() => checkPluginStatus(), 1000);
+      
+      // 恢复按钮
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      try { lucide.createIcons(); } catch (e) {}
+      
+      // 提示用户下一步操作
+      setTimeout(async () => {
+        const action = await showModal(
+          '安装成功',
+          '插件安装成功！MCP 已自动配置。\n\n' +
+          '接下来请：\n' +
+          '1. 点击"激活插件"同步激活码\n' +
+          '2. 启动 Windsurf\n\n' +
+          '是否现在激活插件？'
+        );
+        
+        if (action) {
+          await activatePlugin();
+        }
+      }, 500);
+    } else {
+      showToast(`安装失败: ${result.message}`, 'error');
+      log(`❌ 安装失败: ${result.message}`, 'error');
+      
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  } catch (error) {
+    showToast(`安装失败: ${error.message}`, 'error');
+    log(`❌ 安装失败: ${error.message}`, 'error');
+    
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 激活插件
+async function activatePlugin() {
+  const btn = document.getElementById('activate-plugin-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>激活中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始激活插件...', 'info');
+  showToast('正在同步激活码到插件...', 'info');
+  
+  try {
+    const result = await window.electronAPI.activatePlugin();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 提示用户重启
+      setTimeout(async () => {
+        const confirmed = await showModal(
+          '激活成功',
+          '激活码已同步到插件！\n\n请重启 Windsurf 使插件自动激活。\n\n是否现在重启 Windsurf？'
+        );
+        
+        if (confirmed) {
+          log('用户确认重启 Windsurf', 'info');
+          const killResult = await window.electronAPI.killWindsurf();
+          if (killResult.success) {
+            showToast('Windsurf 已关闭，请手动重启', 'success');
+          }
+        }
+      }, 1000);
+    } else {
+      showToast(`激活失败: ${result.message}`, 'error');
+      log(`❌ 激活失败: ${result.message}`, 'error');
+      
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  } catch (error) {
+    showToast(`激活失败: ${error.message}`, 'error');
+    log(`❌ 激活失败: ${error.message}`, 'error');
+    
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 清除插件缓存（合并后的单一清除功能）
+async function clearPluginCache() {
+  const confirmed = await showModal(
+    '清除插件缓存',
+    '此操作将清除插件相关的缓存，包括：\n\n' +
+    '• 插件激活状态\n' +
+    '• 共享激活码文件\n' +
+    '• 插件缓存文件\n' +
+    '• 旧版本插件\n\n' +
+    '清除后需要重新激活插件。\n\n' +
+    '建议在清除前先关闭 Windsurf。\n\n' +
+    '是否继续？'
+  );
+  
+  if (!confirmed) return;
+  
+  const btn = document.getElementById('clear-cache-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>清除中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始清除插件缓存...', 'info');
+  showToast('正在清除缓存，请稍候...', 'info');
+  
+  try {
+    const result = await window.electronAPI.clearPluginActivationCache();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 显示详细结果
+      if (result.data && result.data.results) {
+        result.data.results.forEach(item => {
+          if (item.cleared) {
+            log(`  ✓ ${item.path}${item.note ? ` (${item.note})` : ''}`, 'success');
+          } else if (item.error) {
+            log(`  ✗ ${item.path}: ${item.error}`, 'warning');
+          } else if (item.note) {
+            log(`  ℹ ${item.path}: ${item.note}`, 'info');
+          }
+        });
+      }
+      
+      // 刷新插件状态
+      setTimeout(() => checkPluginStatus(), 500);
+      
+      // 提示下一步
+      setTimeout(async () => {
+        const action = await showModal(
+          '缓存已清除',
+          '插件缓存清除成功！\n\n建议重启 Windsurf 后重新激活插件。\n\n是否现在关闭 Windsurf？'
+        );
+        
+        if (action) {
+          const killResult = await window.electronAPI.killWindsurf();
+          if (killResult.success) {
+            showToast('Windsurf 已关闭，请手动重启后激活插件', 'success');
+          }
+        }
+      }, 500);
+    } else {
+      showToast(`清除失败: ${result.message}`, 'error');
+      log(`❌ 清除失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`清除失败: ${error.message}`, 'error');
+    log(`❌ 清除失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 配置 MCP
+async function configureMCP() {
+  const btn = document.getElementById('configure-mcp-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>配置中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始配置 MCP...', 'info');
+  showToast('正在配置 MCP，请稍候...', 'info');
+  
+  try {
+    const result = await window.electronAPI.configureMCP();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 刷新状态
+      setTimeout(() => checkPluginStatus(), 500);
+      
+      // 提示用户重启
+      setTimeout(async () => {
+        const confirmed = await showModal(
+          '配置成功',
+          'MCP 配置已完成！\n\n请重启 Windsurf 使插件生效。\n\n是否现在重启 Windsurf？'
+        );
+        
+        if (confirmed) {
+          log('用户确认重启 Windsurf', 'info');
+          const killResult = await window.electronAPI.killWindsurf();
+          if (killResult.success) {
+            showToast('Windsurf 已关闭，请手动重启', 'success');
+          }
+        }
+      }, 1000);
+    } else {
+      showToast(`配置失败: ${result.message}`, 'error');
+      log(`❌ 配置失败: ${result.message}`, 'error');
+      
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  } catch (error) {
+    showToast(`配置失败: ${error.message}`, 'error');
+    log(`❌ 配置失败: ${error.message}`, 'error');
+    
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 重置 MCP 配置（修复路径乱码）
+async function resetMCPConfig() {
+  const btn = document.getElementById('reset-mcp-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>重置中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始重置 MCP 配置...', 'info');
+  showToast('正在重置 MCP 配置...', 'info');
+  
+  try {
+    const result = await window.electronAPI.resetMCPConfig();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      log(`✅ ${result.message}`, 'success');
+      if (result.data) {
+        log(`  MCP 服务器: ${result.data.mcpServerPath}`, 'info');
+      }
+      
+      // 刷新状态
+      setTimeout(() => checkPluginStatus(), 500);
+      
+      // 提示重启
+      setTimeout(async () => {
+        const restart = await showModal(
+          'MCP 配置已重置',
+          'MCP 配置已重置成功！\n\n请重启 Windsurf 使配置生效。\n\n是否现在关闭 Windsurf？'
+        );
+        
+        if (restart) {
+          const killResult = await window.electronAPI.killWindsurf();
+          if (killResult.success) {
+            showToast('Windsurf 已关闭，请手动重启', 'success');
+          }
+        }
+      }, 500);
+    } else {
+      showToast(`重置失败: ${result.message}`, 'error');
+      log(`❌ 重置失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`重置失败: ${error.message}`, 'error');
+    log(`❌ 重置失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 安装 AI 规则（强制 AI 使用 ask_continue 工具）
+async function installAIRules() {
+  const btn = document.getElementById('install-rules-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>安装中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始安装 AI 规则...', 'info');
+  showToast('正在安装 AI 规则...', 'info');
+  
+  try {
+    const result = await window.electronAPI.installAIRules();
+    
+    if (result.success) {
+      showToast('AI 规则安装成功！', 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 显示成功提示
+      await showModal(
+        'AI 规则已安装',
+        result.message + '\n\n安装后，AI 在完成每个任务后都会弹出对话框询问是否继续。'
+      );
+    } else {
+      showToast(`安装失败: ${result.message}`, 'error');
+      log(`❌ 安装失败: ${result.message}`, 'error');
+      
+      if (result.message.includes('工作区')) {
+        await showModal(
+          '需要设置工作区',
+          '请先在主页设置工作区路径，AI 规则将安装到工作区根目录的 .windsurfrules 文件中。'
+        );
+      }
+    }
+  } catch (error) {
+    showToast(`安装失败: ${error.message}`, 'error');
+    log(`❌ 安装失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 安装插件到 Kiro
+async function installPluginToKiro() {
+  const btn = document.getElementById('install-kiro-plugin-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>安装中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始安装插件到 Kiro...', 'info');
+  showToast('正在安装插件到 Kiro...', 'info');
+  
+  try {
+    const result = await window.electronAPI.installPluginToKiro();
+    
+    if (result.success) {
+      showToast('插件已安装到 Kiro！', 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 提示配置 MCP
+      setTimeout(async () => {
+        const configMcp = await showModal(
+          '安装成功',
+          '插件已安装到 Kiro！\n\n是否现在配置 Kiro MCP？'
+        );
+        
+        if (configMcp) {
+          await configureKiroMCP();
+        }
+      }, 500);
+    } else {
+      showToast(`安装失败: ${result.message}`, 'error');
+      log(`❌ 安装失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`安装失败: ${error.message}`, 'error');
+    log(`❌ 安装失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 配置 Kiro MCP
+async function configureKiroMCP() {
+  const btn = document.getElementById('configure-kiro-mcp-btn');
+  const originalHtml = btn.innerHTML;
+  
+  // 获取用户输入的路径
+  const kiroSettingsPath = document.getElementById('kiro-settings-path')?.value?.trim() || '';
+  const mcpServerPath = document.getElementById('kiro-mcp-server-path')?.value?.trim() || '';
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>配置中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始配置 Kiro MCP...', 'info');
+  if (kiroSettingsPath) {
+    log(`  使用自定义配置目录: ${kiroSettingsPath}`, 'info');
+  }
+  if (mcpServerPath) {
+    log(`  使用自定义 MCP 服务器: ${mcpServerPath}`, 'info');
+  }
+  showToast('正在配置 Kiro MCP...', 'info');
+  
+  try {
+    const result = await window.electronAPI.configureKiroMCP({
+      kiroSettingsPath,
+      mcpServerPath
+    });
+    
+    if (result.success) {
+      showToast('Kiro MCP 配置成功！', 'success');
+      log(`✅ ${result.message}`, 'success');
+      if (result.data) {
+        log(`  MCP 服务器: ${result.data.mcpServerPath}`, 'info');
+        log(`  配置文件: ${result.data.mcpConfigPath}`, 'info');
+      }
+      
+      await showModal(
+        'Kiro MCP 配置成功',
+        'MCP 配置已完成！\n\n请重启 Kiro 使配置生效。\n\n在 Kiro 中使用时，AI 完成任务后会弹出对话框询问是否继续。'
+      );
+    } else {
+      showToast(`配置失败: ${result.message}`, 'error');
+      log(`❌ 配置失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`配置失败: ${error.message}`, 'error');
+    log(`❌ 配置失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 清除插件激活缓存（专门解决激活失败问题）
+async function clearPluginActivationCache() {
+  const confirmed = await showModal(
+    '清除激活缓存',
+    '此操作将清除插件激活相关的所有缓存，包括：\n\n' +
+    '• 插件的 globalState 存储\n' +
+    '• 共享激活码文件\n' +
+    '• 插件缓存文件\n' +
+    '• 旧版本插件\n\n' +
+    '清除后需要重新激活插件。\n\n' +
+    '建议在清除前先关闭 Windsurf。\n\n' +
+    '是否继续？'
+  );
+  
+  if (!confirmed) return;
+  
+  const btn = document.getElementById('clear-activation-cache-btn');
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>清除中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始清除插件激活缓存...', 'info');
+  showToast('正在清除激活缓存，请稍候...', 'info');
+  
+  try {
+    const result = await window.electronAPI.clearPluginActivationCache();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 显示详细结果
+      if (result.data && result.data.results) {
+        result.data.results.forEach(item => {
+          if (item.cleared) {
+            log(`  ✓ ${item.path}${item.note ? ` (${item.note})` : ''}`, 'success');
+          } else if (item.error) {
+            log(`  ✗ ${item.path}: ${item.error}`, 'warning');
+          } else if (item.note) {
+            log(`  ℹ ${item.path}: ${item.note}`, 'info');
+          }
+        });
+      }
+      
+      // 刷新插件状态
+      setTimeout(() => checkPluginStatus(), 500);
+      
+      // 提示下一步操作
+      setTimeout(async () => {
+        const action = await showModal(
+          '激活缓存已清除',
+          '激活缓存清除成功！\n\n' +
+          '接下来请按以下步骤操作：\n' +
+          '1. 点击"激活插件"重新同步激活码\n' +
+          '2. 重启 Windsurf\n\n' +
+          '是否现在激活插件？'
+        );
+        
+        if (action) {
+          await activatePlugin();
+        }
+      }, 1000);
+    } else {
+      showToast(`清除失败: ${result.message}`, 'error');
+      log(`❌ 清除失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`清除失败: ${error.message}`, 'error');
+    log(`❌ 清除失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
 // ===== 公告功能 =====
 
 // 获取并显示公告
@@ -1390,6 +2006,11 @@ function initNavigation() {
       // 如果切换到账号管理页面，加载历史
       if (targetPage === 'switch') {
         loadAccountHistory();
+      }
+      
+      // 如果切换到插件管理页面，检测插件状态
+      if (targetPage === 'plugins') {
+        checkPluginStatus();
       }
       
       // 重新渲染图标
@@ -1706,4 +2327,42 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // ===== 公告关闭按钮（保留用于兼容） =====
   document.getElementById('close-announcement-btn')?.addEventListener('click', closeAnnouncement);
+  
+  // ===== 插件管理页面事件绑定 =====
+  document.getElementById('install-plugin-btn')?.addEventListener('click', installPlugin);
+  document.getElementById('activate-plugin-btn')?.addEventListener('click', activatePlugin);
+  document.getElementById('configure-mcp-btn')?.addEventListener('click', configureMCP);
+  document.getElementById('clear-cache-btn')?.addEventListener('click', clearPluginCache);
+  document.getElementById('install-rules-btn')?.addEventListener('click', installAIRules);
+  document.getElementById('install-kiro-plugin-btn')?.addEventListener('click', installPluginToKiro);
+  document.getElementById('configure-kiro-mcp-btn')?.addEventListener('click', configureKiroMCP);
+  document.getElementById('refresh-plugin-status-btn')?.addEventListener('click', checkPluginStatus);
+  
+  // Kiro 路径选择按钮
+  document.getElementById('select-kiro-path-btn')?.addEventListener('click', async () => {
+    try {
+      const result = await window.electronAPI.selectFolder();
+      if (result.success && result.path) {
+        document.getElementById('kiro-settings-path').value = result.path;
+        log(`选择了 Kiro 配置目录: ${result.path}`, 'info');
+      }
+    } catch (error) {
+      showToast(`选择目录失败: ${error.message}`, 'error');
+    }
+  });
+  
+  document.getElementById('select-mcp-server-btn')?.addEventListener('click', async () => {
+    try {
+      const result = await window.electronAPI.selectFile({
+        title: '选择 MCP 服务器文件',
+        filters: [{ name: 'JavaScript', extensions: ['js'] }]
+      });
+      if (result.success && result.path) {
+        document.getElementById('kiro-mcp-server-path').value = result.path;
+        log(`选择了 MCP 服务器文件: ${result.path}`, 'info');
+      }
+    } catch (error) {
+      showToast(`选择文件失败: ${error.message}`, 'error');
+    }
+  });
 });

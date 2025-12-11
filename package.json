@@ -20,6 +20,7 @@
   "author": "PaperCrane",
   "license": "MIT",
   "dependencies": {
+    "adm-zip": "^0.5.16",
     "axios": "^1.6.0",
     "lucide": "^0.553.0",
     "sql.js": "^1.10.3",

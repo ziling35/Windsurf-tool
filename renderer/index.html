@@ -28,6 +28,10 @@
           <i data-lucide="file-text" class="nav-icon"></i>
           <span class="nav-text">日志</span>
         </a>
+        <a href="#" class="nav-item" data-page="plugins">
+          <i data-lucide="puzzle" class="nav-icon"></i>
+          <span class="nav-text">插件管理</span>
+        </a>
       </nav>
       <!-- 侧边栏公告 -->
       <div class="sidebar-announcement" id="sidebar-announcement" style="display: none;">
@@ -292,6 +296,146 @@
         </div>
         
         <div id="log-output"></div>
+      </div>
+
+      <!-- 插件管理页面 -->
+      <div class="page" id="page-plugins">
+        <div class="page-header">
+          <h2>插件管理</h2>
+        </div>
+
+        <!-- Windsurf Continue Pro 插件卡片 -->
+        <div class="info-card">
+          <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
+            <div style="width: 48px; height: 48px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+              <i data-lucide="shield-check" style="color: white; width: 28px; height: 28px;"></i>
+            </div>
+            <div style="flex: 1;">
+              <h3 style="margin: 0 0 5px 0; font-size: 1.2em;">Windsurf Continue Pro</h3>
+              <p style="margin: 0; color: #6b7280; font-size: 0.9em;">专属定制版 - 与卡密系统完全打通</p>
+            </div>
+            <div id="plugin-status-badge" class="status-badge" style="padding: 6px 12px; border-radius: 6px; font-size: 0.85em; font-weight: 500;">
+              <i data-lucide="loader" style="width: 14px; height: 14px; margin-right: 4px;"></i>
+              <span>检测中...</span>
+            </div>
+          </div>
+
+          <div class="info-section">
+            <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">功能介绍</h4>
+            <ul style="margin: 0; padding-left: 20px; color: #6b7280; line-height: 1.8;">
+              <li><strong>与卡密完全打通</strong>：自动使用当前激活的卡密</li>
+              <li><strong>安全验证</strong>：定期检查卡密有效性，到期自动停止</li>
+              <li><strong>AI 持续对话</strong>：在同一对话中继续，不消耗新 credits</li>
+              <li><strong>专业界面</strong>：Windows 原生 GUI 对话框</li>
+            </ul>
+          </div>
+
+          <div class="info-section" style="margin-top: 20px;">
+            <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">安装状态</h4>
+            <div id="plugin-status-details" style="color: #6b7280; line-height: 1.8;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <i data-lucide="loader" id="plugin-installed-icon" style="width: 16px; height: 16px;"></i>
+                <span id="plugin-installed-text">检测中...</span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="loader" id="mcp-configured-icon" style="width: 16px; height: 16px;"></i>
+                <span id="mcp-configured-text">检测中...</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="margin-top: 25px; display: flex; gap: 10px; flex-wrap: wrap;">
+            <button id="install-plugin-btn" class="btn btn-primary" style="flex: 1; min-width: 140px;" title="安装或重新安装插件（自动清除旧缓存）">
+              <i data-lucide="download"></i>
+              <span>一键安装</span>
+            </button>
+            <button id="activate-plugin-btn" class="btn btn-success" style="flex: 1; min-width: 140px;" title="同步激活码到插件">
+              <i data-lucide="key"></i>
+              <span>激活插件</span>
+            </button>
+            <button id="configure-mcp-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="配置或重新配置 MCP">
+              <i data-lucide="settings"></i>
+              <span>配置 MCP</span>
+            </button>
+            <button id="clear-cache-btn" class="btn btn-warning" style="flex: 1; min-width: 140px;" title="清除插件相关缓存，解决激活失败等问题">
+              <i data-lucide="trash-2"></i>
+              <span>清除缓存</span>
+            </button>
+            <button id="install-rules-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="安装AI规则，强制AI在完成任务后询问是否继续">
+              <i data-lucide="file-text"></i>
+              <span>安装 AI 规则</span>
+            </button>
+            <button id="refresh-plugin-status-btn" class="icon-btn" title="刷新状态">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          
+          <!-- Kiro 支持 -->
+          <div style="margin-top: 20px; padding-top: 15px; border-top: 1px solid #e5e7eb;">
+            <h4 style="margin: 0 0 12px 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+              <i data-lucide="sparkles" style="width: 18px; height: 18px; color: #8b5cf6;"></i>
+              Kiro IDE 支持
+            </h4>
+            
+            <!-- Kiro 路径配置 -->
+            <div style="margin-bottom: 15px;">
+              <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">Kiro 配置目录</label>
+              <div class="key-input-row">
+                <input type="text" id="kiro-settings-path" class="key-input" placeholder="留空自动检测 (~/.kiro/settings)" style="flex: 1;" />
+                <button id="select-kiro-path-btn" class="btn btn-secondary btn-small" title="选择 Kiro 配置目录">
+                  <i data-lucide="folder"></i>
+                  <span>选择</span>
+                </button>
+              </div>
+              <small style="display: block; margin-top: 4px; color: #6b7280;">Kiro 的 settings 目录，留空则使用默认路径</small>
+            </div>
+            
+            <div style="margin-bottom: 15px;">
+              <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">MCP 服务器文件路径</label>
+              <div class="key-input-row">
+                <input type="text" id="kiro-mcp-server-path" class="key-input" placeholder="留空自动检测" style="flex: 1;" />
+                <button id="select-mcp-server-btn" class="btn btn-secondary btn-small" title="选择 MCP 服务器文件">
+                  <i data-lucide="file"></i>
+                  <span>选择</span>
+                </button>
+              </div>
+              <small style="display: block; margin-top: 4px; color: #6b7280;">mcpServerStandalone.js 文件路径，留空则自动从插件目录查找</small>
+            </div>
+            
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <button id="install-kiro-plugin-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="安装插件到 Kiro IDE">
+                <i data-lucide="download"></i>
+                <span>安装到 Kiro</span>
+              </button>
+              <button id="configure-kiro-mcp-btn" class="btn btn-primary" style="flex: 1; min-width: 140px;" title="配置 Kiro 的 MCP">
+                <i data-lucide="settings"></i>
+                <span>配置 Kiro MCP</span>
+              </button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 使用说明 -->
+        <div class="info-card">
+          <h3>使用说明</h3>
+          <div style="color: #6b7280; line-height: 1.8;">
+            <ol style="padding-left: 20px; margin: 0;">
+              <li><strong>安装插件</strong>：点击"一键安装"按钮，自动安装到 Windsurf</li>
+              <li><strong>激活插件</strong>：点击"激活插件"按钮，自动同步客户端激活码到插件（无需重复输入）</li>
+              <li><strong>配置 MCP</strong>：点击"配置 MCP"自动配置插件</li>
+              <li><strong>重启 Windsurf</strong>：配置完成后重启 Windsurf 使插件生效</li>
+              <li><strong>开始使用</strong>：在 Windsurf 中正常使用 Cascade，AI 结束时会自动弹出对话框</li>
+            </ol>
+            <div style="margin-top: 15px; padding: 12px; background: #d1fae5; border-left: 3px solid #10b981; border-radius: 6px;">
+              <strong style="color: #065f46;">✨ 激活码自动同步</strong>
+              <p style="margin: 8px 0 0 0; color: #065f46;">客户端和插件共享激活码，一次激活全部搞定！插件启动时会自动读取客户端的激活状态，无需重复输入卡密。</p>
+            </div>
+            <div style="margin-top: 12px; padding: 12px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
+              <strong style="color: #92400e;">💡 工作原理</strong>
+              <p style="margin: 8px 0 0 0; color: #92400e;">插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续，不会消耗额外的 credits。这才是真正的"永不停止"！</p>
+            </div>
+          </div>
+        </div>
       </div>
     </main>
   </div>

@@ -1089,6 +1089,1053 @@ ipcMain.handle('get-announcement', async () => {
   }
 });
 
+// ===== 插件管理功能 =====
+
+// 检测插件状态的共享函数
+async function checkPluginStatusInternal() {
+  try {
+    // Windsurf 扩展目录在用户主目录的 .windsurf/extensions
+    const extensionsPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
+    let pluginInstalled = false;
+    let pluginPath = null;
+    
+    console.log('[插件检测] 检查扩展目录:', extensionsPath);
+    
+    // 检查插件是否已安装（支持新版 windsurf-continue-pro 和旧版 ask-continue）
+    if (fs.existsSync(extensionsPath)) {
+      const extensions = fs.readdirSync(extensionsPath);
+      console.log('[插件检测] 扩展目录中的所有插件:', extensions);
+      
+      const askContinueExt = extensions.find(ext => 
+        ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')
+      );
+      
+      console.log('[插件检测] 找到的插件:', askContinueExt);
+      
+      if (askContinueExt) {
+        pluginInstalled = true;
+        pluginPath = path.join(extensionsPath, askContinueExt);
+        console.log('[插件检测] 插件路径:', pluginPath);
+      } else {
+        console.log('[插件检测] 未找到匹配的插件');
+      }
+    } else {
+      console.log('[插件检测] 扩展目录不存在:', extensionsPath);
+    }
+    
+    // 检查 MCP 配置（Windsurf 使用 .codeium/windsurf 目录）
+    const mcpConfigPath = path.join(app.getPath('home'), '.codeium', 'windsurf', 'mcp_config.json');
+    let mcpConfigured = false;
+    console.log('[插件检测] MCP配置路径:', mcpConfigPath);
+    
+    if (fs.existsSync(mcpConfigPath)) {
+      try {
+        const mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+        // 兼容新旧版本的配置名称
+        mcpConfigured = mcpConfig.mcpServers && (
+          mcpConfig.mcpServers.ask_continue !== undefined ||
+          mcpConfig.mcpServers['windsurf-continue-pro'] !== undefined
+        );
+      } catch (e) {
+        // 配置文件解析失败
+      }
+    }
+    
+    return {
+      success: true,
+      data: {
+        pluginInstalled,
+        pluginPath,
+        mcpConfigured,
+        mcpConfigPath
+      }
+    };
+  } catch (error) {
+    console.error('检测插件状态失败:', error);
+    return { success: false, message: error.message };
+  }
+}
+
+// 检测插件状态的IPC handler
+ipcMain.handle('check-plugin-status', async () => {
+  return await checkPluginStatusInternal();
+});
+
+// 安装插件（自动关闭 Windsurf 并清除旧缓存）
+ipcMain.handle('install-plugin', async (event) => {
+  try {
+    // 检测 Windsurf 是否正在运行
+    const isRunning = await processMonitor.isWindsurfRunning();
+    if (isRunning) {
+      console.log('[安装插件] Windsurf 正在运行，需要先关闭...');
+      event.sender.send('switch-progress', { step: 'info', message: '⏳ 正在关闭 Windsurf...' });
+      
+      const killResult = await processMonitor.killWindsurf();
+      if (killResult.killed) {
+        // 等待进程完全退出
+        for (let i = 0; i < 10; i++) {
+          await new Promise(resolve => setTimeout(resolve, 500));
+          const stillRunning = await processMonitor.isWindsurfRunning();
+          if (!stillRunning) break;
+        }
+        console.log('[安装插件] Windsurf 已关闭');
+        event.sender.send('switch-progress', { step: 'info', message: '✅ Windsurf 已关闭' });
+      } else {
+        return { success: false, message: '无法关闭 Windsurf，请手动关闭后重试' };
+      }
+    }
+    
+    // 先清除插件相关缓存
+    console.log('[安装插件] 清除旧缓存...');
+    event.sender.send('switch-progress', { step: 'info', message: '⏳ 清除旧缓存...' });
+    const extensionsPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
+    if (fs.existsSync(extensionsPath)) {
+      const extensions = fs.readdirSync(extensionsPath);
+      for (const ext of extensions) {
+        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
+          const extPath = path.join(extensionsPath, ext);
+          try {
+            fs.rmSync(extPath, { recursive: true, force: true });
+            console.log('[安装插件] 已删除旧版本:', ext);
+          } catch (err) {
+            console.warn('[安装插件] 删除旧版本失败:', err.message);
+          }
+        }
+      }
+    }
+    
+    // 清除插件缓存
+    const cachedExtPath = path.join(windsurfUserDataPath, 'CachedExtensionVSIXs');
+    if (fs.existsSync(cachedExtPath)) {
+      const files = fs.readdirSync(cachedExtPath);
+      for (const file of files) {
+        if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
+          try {
+            fs.unlinkSync(path.join(cachedExtPath, file));
+            console.log('[安装插件] 已清除缓存:', file);
+          } catch (err) {}
+        }
+      }
+    }
+    
+    // 清除 globalState
+    const globalStoragePath = path.join(windsurfUserDataPath, 'User', 'globalStorage');
+    if (fs.existsSync(globalStoragePath)) {
+      const extensions = fs.readdirSync(globalStoragePath);
+      for (const ext of extensions) {
+        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
+          try {
+            fs.rmSync(path.join(globalStoragePath, ext), { recursive: true, force: true });
+            console.log('[安装插件] 已清除 globalState:', ext);
+          } catch (err) {}
+        }
+      }
+    }
+    
+    const pluginFileName = 'windsurf-continue-pro-1.0.0.vsix';
+    
+    // 尝试多个可能的路径
+    let vsixPath = path.join(__dirname, 'resources', pluginFileName);
+    
+    // 如果第一个路径不存在，尝试 app.getAppPath()
+    if (!fs.existsSync(vsixPath)) {
+      vsixPath = path.join(app.getAppPath(), 'resources', pluginFileName);
+    }
+    
+    // 如果还不存在，尝试项目根目录
+    if (!fs.existsSync(vsixPath)) {
+      vsixPath = path.join(process.cwd(), 'resources', pluginFileName);
+    }
+    
+    console.log('检查插件路径:', vsixPath);
+    console.log('__dirname:', __dirname);
+    console.log('app.getAppPath():', app.getAppPath());
+    console.log('process.cwd():', process.cwd());
+    
+    if (!fs.existsSync(vsixPath)) {
+      return { 
+        success: false, 
+        message: `插件文件不存在\n\n检查的路径: ${vsixPath}\n\n请确保 ${pluginFileName} 文件在 resources 目录下` 
+      };
+    }
+    
+    // 检测 Windsurf 可执行文件
+    let windsurfExe = configManager.getWindsurfExePath();
+    if (!windsurfExe) {
+      windsurfExe = detectWindsurfExecutable();
+      if (windsurfExe) {
+        configManager.setWindsurfExePath(windsurfExe);
+      }
+    }
+    
+    if (!windsurfExe || !fs.existsSync(windsurfExe)) {
+      return { success: false, message: '未找到 Windsurf 可执行文件' };
+    }
+    
+    // 获取 Windsurf CLI 路径（在 bin 目录下）
+    const windsurfDir = path.dirname(windsurfExe);
+    const binDir = path.join(windsurfDir, 'bin');
+    const cliPath = path.join(binDir, 'windsurf.cmd');
+    
+    if (!fs.existsSync(cliPath)) {
+      return { success: false, message: `未找到 Windsurf CLI: ${cliPath}` };
+    }
+    
+    // 记录 Windsurf 之前是否在运行
+    const wasWindsurfRunning = isRunning;
+    
+    // 直接解压 VSIX 到扩展目录（绕过 CLI 的重启检测）
+    event.sender.send('switch-progress', { step: 'info', message: '⏳ 正在安装插件...' });
+    
+    try {
+      const AdmZip = require('adm-zip');
+      const zip = new AdmZip(vsixPath);
+      
+      // 目标目录
+      const targetDir = path.join(extensionsPath, 'papercrane.windsurf-continue-pro-1.0.0');
+      
+      // 确保目录存在
+      if (!fs.existsSync(extensionsPath)) {
+        fs.mkdirSync(extensionsPath, { recursive: true });
+      }
+      
+      // 如果目标目录已存在，先删除
+      if (fs.existsSync(targetDir)) {
+        fs.rmSync(targetDir, { recursive: true, force: true });
+      }
+      
+      // 创建目标目录
+      fs.mkdirSync(targetDir, { recursive: true });
+      
+      // 解压 extension 目录内容
+      const zipEntries = zip.getEntries();
+      for (const entry of zipEntries) {
+        if (entry.entryName.startsWith('extension/') && !entry.isDirectory) {
+          const relativePath = entry.entryName.replace('extension/', '');
+          const targetPath = path.join(targetDir, relativePath);
+          const targetDirPath = path.dirname(targetPath);
+          
+          if (!fs.existsSync(targetDirPath)) {
+            fs.mkdirSync(targetDirPath, { recursive: true });
+          }
+          
+          // 使用 Buffer 直接写入，确保二进制完整性
+          const data = entry.getData();
+          fs.writeFileSync(targetPath, data, { encoding: null });
+        }
+      }
+      
+      console.log('[安装插件] 插件已解压到:', targetDir);
+      event.sender.send('switch-progress', { step: 'info', message: '✅ 插件文件已安装' });
+      
+      // 自动配置 MCP
+      try {
+        const mcpServerPath = path.join(targetDir, 'out', 'mcpServerStandalone.js');
+        if (fs.existsSync(mcpServerPath)) {
+          const mcpConfigDir = path.join(app.getPath('home'), '.codeium', 'windsurf');
+          const mcpConfigPath = path.join(mcpConfigDir, 'mcp_config.json');
+          
+          if (!fs.existsSync(mcpConfigDir)) {
+            fs.mkdirSync(mcpConfigDir, { recursive: true });
+          }
+          
+          const mcpConfig = {
+            mcpServers: {
+              ask_continue: {
+                command: 'node',
+                args: [mcpServerPath.replace(/\\/g, '/')],
+                disabled: false
+              }
+            }
+          };
+          
+          fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+          console.log('[安装插件] MCP 配置已自动完成');
+          event.sender.send('switch-progress', { step: 'info', message: '✅ MCP 配置已完成' });
+        }
+      } catch (mcpErr) {
+        console.warn('[安装插件] 自动配置 MCP 失败:', mcpErr.message);
+      }
+      
+      return { 
+        success: true, 
+        message: '插件安装成功！MCP 已自动配置。\n\n请重启 Windsurf 使插件生效。', 
+        wasRunning: wasWindsurfRunning 
+      };
+    } catch (zipError) {
+      console.error('[安装插件] 解压失败:', zipError);
+      return { success: false, message: `解压插件失败: ${zipError.message}` };
+    }
+  } catch (error) {
+    console.error('安装插件失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 激活插件（同步激活码到插件）
+ipcMain.handle('activate-plugin', async () => {
+  try {
+    // 检查是否有激活码
+    if (!keyManager.hasKey()) {
+      return { success: false, message: '请先在客户端激活卡密' };
+    }
+    
+    // 获取当前激活码
+    const activationKey = keyManager.getKey();
+    
+    // 检查插件是否已安装
+    const statusResult = await checkPluginStatusInternal();
+    if (!statusResult.success || !statusResult.data.pluginInstalled) {
+      return { success: false, message: '请先安装插件' };
+    }
+    
+    // 清除插件缓存（强制重新验证）
+    try {
+      const pluginCachePath = path.join(windsurfUserDataPath, 'CachedExtensionVSIXs');
+      if (fs.existsSync(pluginCachePath)) {
+        const files = fs.readdirSync(pluginCachePath);
+        files.forEach(file => {
+          if (file.includes('windsurf-continue-pro')) {
+            const filePath = path.join(pluginCachePath, file);
+            fs.unlinkSync(filePath);
+            console.log('已清除插件缓存:', filePath);
+          }
+        });
+      }
+    } catch (cacheError) {
+      console.warn('清除插件缓存失败（可忽略）:', cacheError.message);
+    }
+    
+    // 将激活码写入 Windsurf 用户数据目录下的共享文件
+    const sharedKeyPath = path.join(windsurfUserDataPath, 'windsurf-pro-key.json');
+    const keyData = {
+      secretKey: activationKey,
+      syncedAt: new Date().toISOString(),
+      syncedBy: 'client-tool'
+    };
+    
+    fs.writeFileSync(sharedKeyPath, JSON.stringify(keyData, null, 2), 'utf-8');
+    
+    return { 
+      success: true, 
+      message: '激活码已同步到插件！已清除缓存。\n请重启 Windsurf 使插件自动激活。',
+      data: { sharedKeyPath }
+    };
+  } catch (error) {
+    console.error('激活插件失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 清除 Windsurf 缓存
+ipcMain.handle('clear-windsurf-cache', async () => {
+  try {
+    const cachePaths = [
+      // 插件缓存
+      path.join(windsurfUserDataPath, 'CachedExtensionVSIXs'),
+      // 扩展数据缓存
+      path.join(windsurfUserDataPath, 'CachedExtensions'),
+      // 工作区存储缓存
+      path.join(windsurfUserDataPath, 'User', 'workspaceStorage'),
+      // GPUCache
+      path.join(windsurfUserDataPath, 'GPUCache'),
+      // Code Cache
+      path.join(windsurfUserDataPath, 'Code Cache'),
+      // Crash Reports
+      path.join(windsurfUserDataPath, 'Crashpad'),
+      // ===== 新增：插件激活相关缓存 =====
+      // 插件 globalState 存储（关键！这里存储了插件的激活状态）
+      path.join(windsurfUserDataPath, 'User', 'globalStorage'),
+      // 扩展主机缓存
+      path.join(windsurfUserDataPath, 'CachedData'),
+      // 日志文件
+      path.join(windsurfUserDataPath, 'logs'),
+    ];
+    
+    let clearedCount = 0;
+    let totalSize = 0;
+    const results = [];
+    
+    for (const cachePath of cachePaths) {
+      if (fs.existsSync(cachePath)) {
+        try {
+          const stats = getDirectorySize(cachePath);
+          totalSize += stats.size;
+          
+          // 递归删除目录内容但保留目录本身
+          if (fs.statSync(cachePath).isDirectory()) {
+            const files = fs.readdirSync(cachePath);
+            for (const file of files) {
+              const filePath = path.join(cachePath, file);
+              try {
+                if (fs.statSync(filePath).isDirectory()) {
+                  fs.rmSync(filePath, { recursive: true, force: true });
+                } else {
+                  fs.unlinkSync(filePath);
+                }
+                clearedCount++;
+              } catch (err) {
+                console.warn(`无法删除: ${filePath}`, err.message);
+              }
+            }
+          }
+          
+          results.push({
+            path: path.basename(cachePath),
+            size: formatBytes(stats.size),
+            cleared: true
+          });
+        } catch (err) {
+          results.push({
+            path: path.basename(cachePath),
+            error: err.message,
+            cleared: false
+          });
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      message: `已清除 ${clearedCount} 个缓存文件/目录\n释放空间: ${formatBytes(totalSize)}`,
+      data: { clearedCount, totalSize: formatBytes(totalSize), results }
+    };
+  } catch (error) {
+    console.error('清除缓存失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 辅助函数：计算目录大小
+function getDirectorySize(dirPath) {
+  let size = 0;
+  let count = 0;
+  
+  try {
+    const files = fs.readdirSync(dirPath);
+    for (const file of files) {
+      const filePath = path.join(dirPath, file);
+      try {
+        const stats = fs.statSync(filePath);
+        if (stats.isDirectory()) {
+          const subResult = getDirectorySize(filePath);
+          size += subResult.size;
+          count += subResult.count;
+        } else {
+          size += stats.size;
+          count++;
+        }
+      } catch (err) {
+        // 忽略无法访问的文件
+      }
+    }
+  } catch (err) {
+    // 忽略无法访问的目录
+  }
+  
+  return { size, count };
+}
+
+// 辅助函数：格式化字节大小
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
+}
+
+// 配置 MCP
+ipcMain.handle('configure-mcp', async () => {
+  try {
+    // 获取插件路径
+    const statusResult = await checkPluginStatusInternal();
+    if (!statusResult.success || !statusResult.data.pluginInstalled) {
+      return { success: false, message: '请先安装插件' };
+    }
+    
+    const pluginPath = statusResult.data.pluginPath;
+    
+    // 尝试查找 MCP 服务器文件（支持新旧版本）
+    let mcpServerPath = path.join(pluginPath, 'out', 'mcpServerStandalone.js');
+    if (!fs.existsSync(mcpServerPath)) {
+      // 兼容旧版本
+      mcpServerPath = path.join(pluginPath, 'mcp-server.js');
+    }
+    
+    if (!fs.existsSync(mcpServerPath)) {
+      return { success: false, message: '未找到 MCP 服务器文件\n请确保插件安装完整' };
+    }
+    
+    // MCP 配置文件路径（Windsurf 使用 .codeium/windsurf 目录）
+    const mcpConfigDir = path.join(app.getPath('home'), '.codeium', 'windsurf');
+    const mcpConfigPath = path.join(mcpConfigDir, 'mcp_config.json');
+    
+    // 确保目录存在
+    if (!fs.existsSync(mcpConfigDir)) {
+      fs.mkdirSync(mcpConfigDir, { recursive: true });
+    }
+    
+    // 读取或创建配置
+    let mcpConfig = { mcpServers: {} };
+    if (fs.existsSync(mcpConfigPath)) {
+      try {
+        mcpConfig = JSON.parse(fs.readFileSync(mcpConfigPath, 'utf-8'));
+      } catch (e) {
+        // 配置文件损坏，使用新配置
+      }
+    }
+    
+    // 添加 ask_continue 配置
+    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+    mcpConfig.mcpServers.ask_continue = {
+      command: 'node',
+      args: [mcpServerPath.replace(/\\/g, '/')]
+    };
+    
+    // 写入配置
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+    
+    return { success: true, message: 'MCP 配置成功！请重启 Windsurf 使配置生效。' };
+  } catch (error) {
+    console.error('配置 MCP 失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 重置 MCP 配置（修复路径乱码和启用状态）
+ipcMain.handle('reset-mcp-config', async () => {
+  try {
+    // 获取插件路径
+    const statusResult = await checkPluginStatusInternal();
+    if (!statusResult.success || !statusResult.data.pluginInstalled) {
+      return { success: false, message: '请先安装插件' };
+    }
+    
+    const pluginPath = statusResult.data.pluginPath;
+    
+    // 查找 MCP 服务器文件
+    let mcpServerPath = path.join(pluginPath, 'out', 'mcpServerStandalone.js');
+    if (!fs.existsSync(mcpServerPath)) {
+      mcpServerPath = path.join(pluginPath, 'mcp-server.js');
+    }
+    
+    if (!fs.existsSync(mcpServerPath)) {
+      return { success: false, message: '未找到 MCP 服务器文件' };
+    }
+    
+    // MCP 配置文件路径
+    const mcpConfigDir = path.join(app.getPath('home'), '.codeium', 'windsurf');
+    const mcpConfigPath = path.join(mcpConfigDir, 'mcp_config.json');
+    
+    // 确保目录存在
+    if (!fs.existsSync(mcpConfigDir)) {
+      fs.mkdirSync(mcpConfigDir, { recursive: true });
+    }
+    
+    // 创建全新的配置（覆盖旧配置，修复乱码）
+    const mcpConfig = {
+      mcpServers: {
+        ask_continue: {
+          command: 'node',
+          args: [mcpServerPath.replace(/\\/g, '/')],
+          disabled: false
+        }
+      }
+    };
+    
+    // 写入配置
+    fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+    
+    console.log('[MCP] 配置已重置:', mcpConfigPath);
+    console.log('[MCP] 服务器路径:', mcpServerPath);
+    
+    return { 
+      success: true, 
+      message: 'MCP 配置已重置！请重启 Windsurf 使配置生效。',
+      data: { mcpServerPath, mcpConfigPath }
+    };
+  } catch (error) {
+    console.error('重置 MCP 配置失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 安装 AI 规则（强制 AI 使用 ask_continue 工具）
+ipcMain.handle('install-ai-rules', async () => {
+  try {
+    // 获取工作区路径
+    const workspacePath = configManager.getLastWorkspacePath();
+    
+    if (!workspacePath || !fs.existsSync(workspacePath)) {
+      return { 
+        success: false, 
+        message: '请先设置工作区路径，AI 规则将安装到工作区根目录' 
+      };
+    }
+    
+    const rulesPath = path.join(workspacePath, '.windsurfrules');
+    
+    // AI 规则内容
+    const rulesContent = `# Windsurf Continue Pro - AI 规则
+
+## 重要规则：对话持续
+
+在完成任何任务或准备结束对话之前，你必须：
+
+1. **必须调用 \`ask_continue\` MCP 工具** 询问用户是否要继续
+2. 在调用时，提供清晰的结束原因（reason 参数）
+3. 等待用户通过对话框确认后再决定是否继续
+
+## 调用方式
+
+当你完成一个任务后，必须调用：
+\`\`\`
+ask_continue(reason="任务已完成：[具体描述你完成了什么]")
+\`\`\`
+
+## 注意事项
+
+- 不要在没有调用 \`ask_continue\` 的情况下结束对话
+- 如果用户选择继续，根据用户的新指令继续工作
+- 如果用户选择结束，才可以结束当前对话
+- 每次完成用户请求后都要调用此工具
+
+## 示例场景
+
+1. 完成代码修改后 → 调用 ask_continue
+2. 回答问题后 → 调用 ask_continue
+3. 执行命令后 → 调用 ask_continue
+4. 创建文件后 → 调用 ask_continue
+`;
+    
+    // 写入规则文件
+    fs.writeFileSync(rulesPath, rulesContent, 'utf-8');
+    
+    return { 
+      success: true, 
+      message: `AI 规则已安装到: ${rulesPath}\n\n重启 Windsurf 后，AI 将在每次完成任务后询问是否继续。`,
+      data: { rulesPath }
+    };
+  } catch (error) {
+    console.error('安装 AI 规则失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 配置 Kiro MCP
+ipcMain.handle('configure-kiro-mcp', async (event, options = {}) => {
+  try {
+    // Kiro MCP 配置路径（支持自定义）
+    let kiroSettingsDir;
+    if (options.kiroSettingsPath && options.kiroSettingsPath.trim()) {
+      kiroSettingsDir = options.kiroSettingsPath.trim();
+      console.log('[Kiro MCP] 使用自定义配置目录:', kiroSettingsDir);
+    } else {
+      kiroSettingsDir = path.join(app.getPath('home'), '.kiro', 'settings');
+      console.log('[Kiro MCP] 使用默认配置目录:', kiroSettingsDir);
+    }
+    const kiroMcpConfigPath = path.join(kiroSettingsDir, 'mcp.json');
+    
+    let mcpServerPath = null;
+    
+    // 如果用户指定了 MCP 服务器路径，直接使用
+    if (options.mcpServerPath && options.mcpServerPath.trim()) {
+      mcpServerPath = options.mcpServerPath.trim();
+      console.log('[Kiro MCP] 使用自定义 MCP 服务器:', mcpServerPath);
+      
+      if (!fs.existsSync(mcpServerPath)) {
+        return { success: false, message: `指定的 MCP 服务器文件不存在: ${mcpServerPath}` };
+      }
+    } else {
+      // 自动查找 MCP 服务器文件
+      console.log('[Kiro MCP] 自动查找 MCP 服务器文件...');
+      
+      // 查找 MCP 服务器文件（优先使用 Kiro 扩展目录中的）
+      const kiroExtensionsPath = path.join(app.getPath('home'), '.kiro', 'extensions');
+      
+      // 在 Kiro 扩展目录中查找
+      if (fs.existsSync(kiroExtensionsPath)) {
+        const extensions = fs.readdirSync(kiroExtensionsPath);
+        const pluginDir = extensions.find(ext => 
+          ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')
+        );
+        
+        if (pluginDir) {
+          const possiblePath = path.join(kiroExtensionsPath, pluginDir, 'out', 'mcpServerStandalone.js');
+          if (fs.existsSync(possiblePath)) {
+            mcpServerPath = possiblePath;
+            console.log('[Kiro MCP] 在 Kiro 扩展目录中找到:', mcpServerPath);
+          }
+        }
+      }
+      
+      // 如果 Kiro 中没有，尝试使用 Windsurf 扩展目录中的
+      if (!mcpServerPath) {
+        const windsurfExtPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
+        if (fs.existsSync(windsurfExtPath)) {
+          const extensions = fs.readdirSync(windsurfExtPath);
+          const pluginDir = extensions.find(ext => 
+            ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')
+          );
+          
+          if (pluginDir) {
+            const possiblePath = path.join(windsurfExtPath, pluginDir, 'out', 'mcpServerStandalone.js');
+            if (fs.existsSync(possiblePath)) {
+              mcpServerPath = possiblePath;
+              console.log('[Kiro MCP] 在 Windsurf 扩展目录中找到:', mcpServerPath);
+            }
+          }
+        }
+      }
+      
+      if (!mcpServerPath) {
+        return { success: false, message: '未找到 MCP 服务器文件，请先安装插件或手动指定路径' };
+      }
+    }
+    
+    // 确保目录存在
+    if (!fs.existsSync(kiroSettingsDir)) {
+      fs.mkdirSync(kiroSettingsDir, { recursive: true });
+    }
+    
+    // 读取或创建配置
+    let mcpConfig = { mcpServers: {} };
+    if (fs.existsSync(kiroMcpConfigPath)) {
+      try {
+        mcpConfig = JSON.parse(fs.readFileSync(kiroMcpConfigPath, 'utf-8'));
+      } catch (e) {
+        // 配置文件损坏，使用新配置
+      }
+    }
+    
+    // 添加 ask_continue 配置
+    mcpConfig.mcpServers = mcpConfig.mcpServers || {};
+    mcpConfig.mcpServers.ask_continue = {
+      command: 'node',
+      args: [mcpServerPath.replace(/\\/g, '/')],
+      disabled: false,
+      autoApprove: ['ask_continue']
+    };
+    
+    // 写入配置
+    fs.writeFileSync(kiroMcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+    
+    console.log('[Kiro MCP] 配置已更新:', kiroMcpConfigPath);
+    console.log('[Kiro MCP] 服务器路径:', mcpServerPath);
+    
+    return { 
+      success: true, 
+      message: 'Kiro MCP 配置成功！请重启 Kiro 使配置生效。',
+      data: { mcpServerPath, mcpConfigPath: kiroMcpConfigPath }
+    };
+  } catch (error) {
+    console.error('配置 Kiro MCP 失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 选择文件夹
+ipcMain.handle('select-folder', async () => {
+  try {
+    const result = await dialog.showOpenDialog({
+      properties: ['openDirectory']
+    });
+    
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, message: '用户取消选择' };
+    }
+    
+    return { success: true, path: result.filePaths[0] };
+  } catch (error) {
+    console.error('选择文件夹失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 选择文件
+ipcMain.handle('select-file', async (event, options = {}) => {
+  try {
+    const dialogOptions = {
+      properties: ['openFile']
+    };
+    
+    if (options.title) {
+      dialogOptions.title = options.title;
+    }
+    
+    if (options.filters) {
+      dialogOptions.filters = options.filters;
+    }
+    
+    const result = await dialog.showOpenDialog(dialogOptions);
+    
+    if (result.canceled || result.filePaths.length === 0) {
+      return { success: false, message: '用户取消选择' };
+    }
+    
+    return { success: true, path: result.filePaths[0] };
+  } catch (error) {
+    console.error('选择文件失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 安装插件到 Kiro
+ipcMain.handle('install-plugin-to-kiro', async () => {
+  try {
+    const pluginFileName = 'windsurf-continue-pro-1.0.0.vsix';
+    
+    // 查找插件文件
+    let vsixPath = path.join(__dirname, 'resources', pluginFileName);
+    if (!fs.existsSync(vsixPath)) {
+      vsixPath = path.join(app.getAppPath(), 'resources', pluginFileName);
+    }
+    if (!fs.existsSync(vsixPath)) {
+      vsixPath = path.join(process.cwd(), 'resources', pluginFileName);
+    }
+    
+    if (!fs.existsSync(vsixPath)) {
+      return { success: false, message: '插件文件不存在，请确保 resources 目录下有插件文件' };
+    }
+    
+    // Kiro 扩展目录
+    const kiroExtensionsPath = path.join(app.getPath('home'), '.kiro', 'extensions');
+    const targetDir = path.join(kiroExtensionsPath, 'papercrane.windsurf-continue-pro-1.0.0');
+    
+    // 确保目录存在
+    if (!fs.existsSync(kiroExtensionsPath)) {
+      fs.mkdirSync(kiroExtensionsPath, { recursive: true });
+    }
+    
+    // 如果已存在，先删除
+    if (fs.existsSync(targetDir)) {
+      fs.rmSync(targetDir, { recursive: true, force: true });
+    }
+    
+    // 解压 VSIX 文件（VSIX 实际上是 ZIP 格式）
+    const AdmZip = require('adm-zip');
+    const zip = new AdmZip(vsixPath);
+    
+    // 创建临时目录
+    const tempDir = path.join(app.getPath('temp'), 'windsurf-pro-install');
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+    
+    // 解压到临时目录
+    zip.extractAllTo(tempDir, true);
+    
+    // 移动 extension 目录到目标位置
+    const extensionDir = path.join(tempDir, 'extension');
+    if (fs.existsSync(extensionDir)) {
+      fs.renameSync(extensionDir, targetDir);
+    } else {
+      // 如果没有 extension 子目录，直接移动
+      fs.renameSync(tempDir, targetDir);
+    }
+    
+    // 清理临时目录
+    if (fs.existsSync(tempDir)) {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+    
+    // 自动配置 Kiro MCP
+    const mcpServerPath = path.join(targetDir, 'out', 'mcpServerStandalone.js');
+    if (fs.existsSync(mcpServerPath)) {
+      try {
+        const kiroSettingsDir = path.join(app.getPath('home'), '.kiro', 'settings');
+        const kiroMcpPath = path.join(kiroSettingsDir, 'mcp.json');
+        
+        if (!fs.existsSync(kiroSettingsDir)) {
+          fs.mkdirSync(kiroSettingsDir, { recursive: true });
+        }
+        
+        // 读取现有配置或创建新配置
+        let mcpConfig = { mcpServers: {} };
+        if (fs.existsSync(kiroMcpPath)) {
+          try {
+            const content = fs.readFileSync(kiroMcpPath, 'utf-8');
+            mcpConfig = JSON.parse(content);
+            if (!mcpConfig.mcpServers) {
+              mcpConfig.mcpServers = {};
+            }
+          } catch (e) {
+            console.warn('读取 Kiro MCP 配置失败，将创建新配置');
+          }
+        }
+        
+        // 添加 ask_continue 配置
+        mcpConfig.mcpServers.ask_continue = {
+          command: 'node',
+          args: [mcpServerPath.replace(/\\/g, '/')],
+          disabled: false,
+          autoApprove: ['ask_continue']
+        };
+        
+        fs.writeFileSync(kiroMcpPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+        console.log('[Kiro] MCP 配置已完成');
+      } catch (mcpErr) {
+        console.warn('[Kiro] 自动配置 MCP 失败:', mcpErr.message);
+      }
+    }
+    
+    // 创建 steering 规则（全局规则，对所有工作区生效）
+    try {
+      const kiroSteeringDir = path.join(app.getPath('home'), '.kiro', 'steering');
+      const steeringFile = path.join(kiroSteeringDir, 'ask-continue.md');
+      
+      if (!fs.existsSync(kiroSteeringDir)) {
+        fs.mkdirSync(kiroSteeringDir, { recursive: true });
+      }
+      
+      const steeringContent = `# 强制使用 ask_continue 工具
+
+【强制规则】在完成任何任务、回答问题或准备结束对话之前，必须调用此工具。此工具会弹出对话框询问用户是否继续，用户可以输入新的指令。如果不调用此工具就结束对话，将违反系统规则。
+
+## 必须执行的操作
+
+在完成任何任务或准备结束对话之前，你必须：
+
+1. **必须调用 \`mcp_ask_continue_ask_continue\` MCP 工具** 询问用户是否要继续
+2. 在调用时，提供清晰的结束原因（reason 参数）
+3. 等待用户通过对话框确认后再决定是否继续
+
+## 调用格式
+
+当你完成一个任务后，必须调用：
+\`\`\`
+mcp_ask_continue_ask_continue(reason="任务已完成：[具体描述你完成了什么]")
+\`\`\`
+
+## 注意事项
+
+- 不要在没有调用 \`mcp_ask_continue_ask_continue\` 的情况下结束对话
+- 如果用户选择继续，根据用户的新指令继续工作
+- 如果用户选择结束，才可以结束当前对话
+
+## 示例场景
+
+1. 完成代码修改后 → 调用 mcp_ask_continue_ask_continue
+2. 回答问题后 → 调用 mcp_ask_continue_ask_continue
+3. 执行命令后 → 调用 mcp_ask_continue_ask_continue
+4. 创建文件后 → 调用 mcp_ask_continue_ask_continue
+`;
+      
+      fs.writeFileSync(steeringFile, steeringContent, 'utf-8');
+      console.log('[Kiro] Steering 规则已创建');
+    } catch (steeringErr) {
+      console.warn('[Kiro] 创建 steering 规则失败:', steeringErr.message);
+    }
+    
+    return { 
+      success: true, 
+      message: '插件已安装到 Kiro！\n\n✅ 插件文件已安装\n✅ MCP 配置已完成\n✅ AI 规则已创建\n\n请重启 Kiro 使插件生效。',
+      data: { targetDir }
+    };
+  } catch (error) {
+    console.error('安装插件到 Kiro 失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 清除插件激活缓存（专门针对激活问题）
+ipcMain.handle('clear-plugin-activation-cache', async () => {
+  try {
+    const results = [];
+    let clearedCount = 0;
+    
+    // 1. 清除插件的 globalState（存储激活状态的关键位置）
+    const globalStoragePath = path.join(windsurfUserDataPath, 'User', 'globalStorage');
+    if (fs.existsSync(globalStoragePath)) {
+      const extensions = fs.readdirSync(globalStoragePath);
+      for (const ext of extensions) {
+        // 只清除我们插件相关的存储
+        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
+          const extPath = path.join(globalStoragePath, ext);
+          try {
+            fs.rmSync(extPath, { recursive: true, force: true });
+            results.push({ path: `globalStorage/${ext}`, cleared: true });
+            clearedCount++;
+          } catch (err) {
+            results.push({ path: `globalStorage/${ext}`, error: err.message, cleared: false });
+          }
+        }
+      }
+    }
+    
+    // 2. 清除共享的激活码文件（强制重新同步）
+    const sharedKeyPath = path.join(windsurfUserDataPath, 'windsurf-pro-key.json');
+    if (fs.existsSync(sharedKeyPath)) {
+      try {
+        fs.unlinkSync(sharedKeyPath);
+        results.push({ path: 'windsurf-pro-key.json', cleared: true });
+        clearedCount++;
+      } catch (err) {
+        results.push({ path: 'windsurf-pro-key.json', error: err.message, cleared: false });
+      }
+    }
+    
+    // 3. 清除插件的 state.vscdb 中的相关数据（如果存在）
+    const stateDbPath = path.join(windsurfUserDataPath, 'User', 'globalStorage', 'state.vscdb');
+    // 注意：state.vscdb 是 SQLite 数据库，这里只记录位置，不直接删除
+    if (fs.existsSync(stateDbPath)) {
+      results.push({ path: 'state.vscdb', note: '存在，建议重启 Windsurf 后自动清理', cleared: false });
+    }
+    
+    // 4. 清除扩展缓存中的插件相关文件
+    const cachedExtPath = path.join(windsurfUserDataPath, 'CachedExtensionVSIXs');
+    if (fs.existsSync(cachedExtPath)) {
+      const files = fs.readdirSync(cachedExtPath);
+      for (const file of files) {
+        if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
+          const filePath = path.join(cachedExtPath, file);
+          try {
+            fs.unlinkSync(filePath);
+            results.push({ path: `CachedExtensionVSIXs/${file}`, cleared: true });
+            clearedCount++;
+          } catch (err) {
+            results.push({ path: `CachedExtensionVSIXs/${file}`, error: err.message, cleared: false });
+          }
+        }
+      }
+    }
+    
+    // 5. 清除 .windsurf/extensions 中的旧版本插件
+    const extensionsPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
+    if (fs.existsSync(extensionsPath)) {
+      const extensions = fs.readdirSync(extensionsPath);
+      const pluginVersions = extensions.filter(ext => 
+        ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')
+      );
+      
+      // 如果有多个版本，只保留最新的
+      if (pluginVersions.length > 1) {
+        // 按版本号排序，删除旧版本
+        pluginVersions.sort().slice(0, -1).forEach(oldVersion => {
+          const oldPath = path.join(extensionsPath, oldVersion);
+          try {
+            fs.rmSync(oldPath, { recursive: true, force: true });
+            results.push({ path: `extensions/${oldVersion}`, cleared: true, note: '旧版本' });
+            clearedCount++;
+          } catch (err) {
+            results.push({ path: `extensions/${oldVersion}`, error: err.message, cleared: false });
+          }
+        });
+      }
+    }
+    
+    return {
+      success: true,
+      message: `已清除 ${clearedCount} 个插件激活相关缓存\n请重新激活插件并重启 Windsurf`,
+      data: { clearedCount, results }
+    };
+  } catch (error) {
+    console.error('清除插件激活缓存失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // ===== App 生命周期 =====
 
 app.whenReady().then(async () => {
