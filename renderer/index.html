@@ -24,13 +24,17 @@
           <i data-lucide="repeat" class="nav-icon"></i>
           <span class="nav-text">切换账号</span>
         </a>
-        <a href="#" class="nav-item" data-page="logs">
-          <i data-lucide="file-text" class="nav-icon"></i>
-          <span class="nav-text">日志</span>
-        </a>
         <a href="#" class="nav-item" data-page="plugins">
           <i data-lucide="puzzle" class="nav-icon"></i>
           <span class="nav-text">插件管理</span>
+        </a>
+        <a href="#" class="nav-item" data-page="version">
+          <i data-lucide="info" class="nav-icon"></i>
+          <span class="nav-text">版本说明</span>
+        </a>
+        <a href="#" class="nav-item" data-page="logs">
+          <i data-lucide="file-text" class="nav-icon"></i>
+          <span class="nav-text">日志</span>
         </a>
       </nav>
       <!-- 侧边栏公告 -->
@@ -288,6 +292,9 @@
       <div class="page" id="page-logs">
         <div class="page-header page-header-with-action">
           <h2>操作日志</h2>
+          <button id="copy-logs-btn" class="icon-btn" title="复制日志" style="margin-left: auto; margin-right: 10px;">
+            <i data-lucide="copy"></i>
+          </button>
           <button class="header-purchase-btn" data-purchase-trigger>
             <i data-lucide="shopping-cart"></i>
             <span>购买密钥</span>
@@ -300,12 +307,29 @@
 
       <!-- 插件管理页面 -->
       <div class="page" id="page-plugins">
-        <div class="page-header">
+        <div class="page-header page-header-with-action">
           <h2>插件管理</h2>
+          <button id="refresh-plugins-btn" class="icon-btn" title="刷新插件列表" style="margin-left: auto; margin-right: 10px;">
+            <i data-lucide="refresh-cw"></i>
+          </button>
+          <button class="header-purchase-btn" data-purchase-trigger>
+            <i data-lucide="shopping-cart"></i>
+            <span>购买密钥</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
         </div>
 
-        <!-- Windsurf Continue Pro 插件卡片 -->
-        <div class="info-card">
+        <!-- 动态插件列表容器 -->
+        <div id="plugins-container">
+          <!-- 加载中状态 -->
+          <div id="plugins-loading" class="info-card" style="text-align: center; padding: 40px;">
+            <i data-lucide="loader" style="width: 32px; height: 32px; animation: spin 1s linear infinite;"></i>
+            <p style="margin-top: 15px; color: #6b7280;">正在从服务器加载插件列表...</p>
+          </div>
+        </div>
+
+        <!-- 备用：硬编码的 Windsurf Continue Pro 插件卡片（当后端不可用时显示） -->
+        <div id="fallback-plugin-card" class="info-card" style="display: none;">
           <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
             <div style="width: 48px; height: 48px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
               <i data-lucide="shield-check" style="color: white; width: 28px; height: 28px;"></i>
@@ -320,14 +344,21 @@
             </div>
           </div>
 
-          <div class="info-section">
-            <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">功能介绍</h4>
-            <ul style="margin: 0; padding-left: 20px; color: #6b7280; line-height: 1.8;">
-              <li><strong>与卡密完全打通</strong>：自动使用当前激活的卡密</li>
-              <li><strong>安全验证</strong>：定期检查卡密有效性，到期自动停止</li>
-              <li><strong>AI 持续对话</strong>：在同一对话中继续，不消耗新 credits</li>
-              <li><strong>专业界面</strong>：Windows 原生 GUI 对话框</li>
-            </ul>
+          <div class="info-section collapsible-section">
+            <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+              <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
+                功能介绍
+              </h4>
+            </div>
+            <div class="collapsible-content">
+              <ul style="margin: 10px 0 0 0; padding-left: 20px; color: #6b7280; line-height: 1.8;">
+                <li><strong>与卡密完全打通</strong>：自动使用当前激活的卡密</li>
+                <li><strong>安全验证</strong>：定期检查卡密有效性，到期自动停止</li>
+                <li><strong>AI 持续对话</strong>：在同一对话中继续，不消耗新 credits</li>
+                <li><strong>专业界面</strong>：Windows 原生 GUI 对话框</li>
+              </ul>
+            </div>
           </div>
 
           <div class="info-section" style="margin-top: 20px;">
@@ -344,30 +375,77 @@
             </div>
           </div>
 
-          <div style="margin-top: 25px; display: flex; gap: 10px; flex-wrap: wrap;">
-            <button id="install-plugin-btn" class="btn btn-primary" style="flex: 1; min-width: 140px;" title="安装或重新安装插件（自动清除旧缓存）">
+          <!-- 插件版本信息（从服务器获取） -->
+          <div class="info-section" style="margin-top: 20px;" id="plugin-server-info-section">
+            <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">版本信息</h4>
+            <div id="plugin-server-info" style="color: #6b7280; line-height: 1.8;">
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <i data-lucide="package" style="width: 16px; height: 16px; color: #6b7280;"></i>
+                <span>本地版本：<strong id="plugin-local-version">检测中...</strong></span>
+              </div>
+              <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+                <i data-lucide="cloud" style="width: 16px; height: 16px; color: #6b7280;"></i>
+                <span>最新版本：<strong id="plugin-latest-version">获取中...</strong></span>
+              </div>
+              <div id="plugin-update-info" style="display: none; margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
+                <strong style="color: #92400e;" id="plugin-update-title">发现新版本</strong>
+                <p style="margin: 5px 0 0 0; color: #92400e; font-size: 0.9em;" id="plugin-update-desc"></p>
+                <button id="update-plugin-btn" class="btn btn-warning" style="margin-top: 10px; padding: 6px 12px; font-size: 0.85em;">
+                  <i data-lucide="download-cloud"></i>
+                  <span>立即更新</span>
+                </button>
+              </div>
+            </div>
+          </div>
+
+          <!-- 工作目录配置 -->
+          <div class="info-section" style="margin-top: 20px;">
+            <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">工作目录</label>
+            <div class="key-input-row">
+              <input type="text" id="ai-rules-path" class="key-input auto-save" data-config-key="aiRulesPath" placeholder="留空则使用主页设置的工作目录" style="flex: 1;" />
+              <button id="select-ai-rules-path-btn" class="btn btn-secondary btn-small" title="选择工作目录">
+                <i data-lucide="folder"></i>
+                <span>选择</span>
+              </button>
+            </div>
+            <small style="display: block; margin-top: 4px; color: #6b7280;">AI 规则将安装到此目录，留空则使用主页设置的工作目录</small>
+          </div>
+
+          <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+            <button id="install-plugin-btn" class="btn btn-primary" style="flex: 1; min-width: 160px;" title="安装或重新安装插件（自动完成全部配置并重启 Windsurf）">
               <i data-lucide="download"></i>
               <span>一键安装</span>
-            </button>
-            <button id="activate-plugin-btn" class="btn btn-success" style="flex: 1; min-width: 140px;" title="同步激活码到插件">
-              <i data-lucide="key"></i>
-              <span>激活插件</span>
-            </button>
-            <button id="configure-mcp-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="配置或重新配置 MCP">
-              <i data-lucide="settings"></i>
-              <span>配置 MCP</span>
-            </button>
-            <button id="clear-cache-btn" class="btn btn-warning" style="flex: 1; min-width: 140px;" title="清除插件相关缓存，解决激活失败等问题">
-              <i data-lucide="trash-2"></i>
-              <span>清除缓存</span>
-            </button>
-            <button id="install-rules-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="安装AI规则，强制AI在完成任务后询问是否继续">
-              <i data-lucide="file-text"></i>
-              <span>安装 AI 规则</span>
             </button>
             <button id="refresh-plugin-status-btn" class="icon-btn" title="刷新状态">
               <i data-lucide="refresh-cw"></i>
             </button>
+            <!-- 更多操作下拉菜单 -->
+            <div class="dropdown" style="position: relative;">
+              <button id="more-actions-btn" class="btn btn-secondary" title="更多操作" onclick="toggleMoreActionsMenu(event)">
+                <i data-lucide="more-horizontal"></i>
+                <span>更多操作</span>
+                <i data-lucide="chevron-down" style="width: 14px; height: 14px; margin-left: 4px;"></i>
+              </button>
+              <div id="more-actions-menu" class="dropdown-menu">
+                <button class="dropdown-item" id="activate-plugin-btn" title="同步激活码到插件" onclick="activatePlugin(); closeMoreActionsMenu();">
+                  <i data-lucide="key"></i>
+                  <span>激活插件</span>
+                </button>
+                <button class="dropdown-item" id="configure-mcp-btn" title="配置或重新配置 MCP" onclick="configureMCP(); closeMoreActionsMenu();">
+                  <i data-lucide="settings"></i>
+                  <span>配置 MCP</span>
+                </button>
+                <button class="dropdown-item" id="install-rules-btn" title="安装AI规则" onclick="installAIRules(); closeMoreActionsMenu();">
+                  <i data-lucide="file-text"></i>
+                  <span>安装 AI 规则</span>
+                </button>
+                <div style="border-top: 1px solid #e5e7eb; margin: 4px 0;"></div>
+                <button class="dropdown-item" id="clear-cache-btn" title="清除插件相关缓存" onclick="clearPluginCache(); closeMoreActionsMenu();">
+                  <i data-lucide="trash-2"></i>
+                  <span>清除缓存</span>
+                </button>
+              </div>
+            </div>
           </div>
           
           <!-- Kiro 支持 -->
@@ -381,7 +459,7 @@
             <div style="margin-bottom: 15px;">
               <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">Kiro 配置目录</label>
               <div class="key-input-row">
-                <input type="text" id="kiro-settings-path" class="key-input" placeholder="留空自动检测 (~/.kiro/settings)" style="flex: 1;" />
+                <input type="text" id="kiro-settings-path" class="key-input auto-save" data-config-key="kiroSettingsPath" placeholder="留空自动检测 (~/.kiro/settings)" style="flex: 1;" />
                 <button id="select-kiro-path-btn" class="btn btn-secondary btn-small" title="选择 Kiro 配置目录">
                   <i data-lucide="folder"></i>
                   <span>选择</span>
@@ -393,7 +471,7 @@
             <div style="margin-bottom: 15px;">
               <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">MCP 服务器文件路径</label>
               <div class="key-input-row">
-                <input type="text" id="kiro-mcp-server-path" class="key-input" placeholder="留空自动检测" style="flex: 1;" />
+                <input type="text" id="kiro-mcp-server-path" class="key-input auto-save" data-config-key="kiroMcpServerPath" placeholder="留空自动检测" style="flex: 1;" />
                 <button id="select-mcp-server-btn" class="btn btn-secondary btn-small" title="选择 MCP 服务器文件">
                   <i data-lucide="file"></i>
                   <span>选择</span>
@@ -413,26 +491,62 @@
               </button>
             </div>
           </div>
-        </div>
-
-        <!-- 使用说明 -->
-        <div class="info-card">
-          <h3>使用说明</h3>
-          <div style="color: #6b7280; line-height: 1.8;">
-            <ol style="padding-left: 20px; margin: 0;">
-              <li><strong>安装插件</strong>：点击"一键安装"按钮，自动安装到 Windsurf</li>
-              <li><strong>激活插件</strong>：点击"激活插件"按钮，自动同步客户端激活码到插件（无需重复输入）</li>
-              <li><strong>配置 MCP</strong>：点击"配置 MCP"自动配置插件</li>
-              <li><strong>重启 Windsurf</strong>：配置完成后重启 Windsurf 使插件生效</li>
-              <li><strong>开始使用</strong>：在 Windsurf 中正常使用 Cascade，AI 结束时会自动弹出对话框</li>
-            </ol>
-            <div style="margin-top: 15px; padding: 12px; background: #d1fae5; border-left: 3px solid #10b981; border-radius: 6px;">
-              <strong style="color: #065f46;">✨ 激活码自动同步</strong>
-              <p style="margin: 8px 0 0 0; color: #065f46;">客户端和插件共享激活码，一次激活全部搞定！插件启动时会自动读取客户端的激活状态，无需重复输入卡密。</p>
+          
+          <!-- 使用说明（可折叠） -->
+          <div class="info-section collapsible-section" style="margin-top: 20px;">
+            <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+              <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
+                使用说明
+              </h4>
             </div>
-            <div style="margin-top: 12px; padding: 12px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
-              <strong style="color: #92400e;">💡 工作原理</strong>
-              <p style="margin: 8px 0 0 0; color: #92400e;">插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续，不会消耗额外的 credits。这才是真正的"永不停止"！</p>
+            <div class="collapsible-content">
+              <div style="color: #6b7280; line-height: 1.8; margin-top: 10px;">
+                <ol style="padding-left: 20px; margin: 0;">
+                  <li><strong>一键安装</strong>：点击"一键安装"按钮，自动完成安装、激活、配置 MCP、安装规则并重启 Windsurf</li>
+                  <li><strong>开始使用</strong>：在 Windsurf 中正常使用 Cascade，AI 结束时会自动弹出对话框</li>
+                </ol>
+                <p style="margin-top: 10px; font-size: 0.9em; color: #9ca3af;">💡 如需单独操作，可点击"更多操作"按钮</p>
+                <div style="margin-top: 15px; padding: 12px; background: #d1fae5; border-left: 3px solid #10b981; border-radius: 6px;">
+                  <strong style="color: #065f46;">✨ 激活码自动同步</strong>
+                  <p style="margin: 8px 0 0 0; color: #065f46;">客户端和插件共享激活码，一次激活全部搞定！插件启动时会自动读取客户端的激活状态，无需重复输入卡密。</p>
+                </div>
+                <div style="margin-top: 12px; padding: 12px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
+                  <strong style="color: #92400e;">💡 工作原理</strong>
+                  <p style="margin: 8px 0 0 0; color: #92400e;">插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续，不会消耗额外的 credits。这才是真正的"永不停止"！</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 版本说明页面 -->
+      <div id="page-version" class="page">
+        <div class="page-header page-header-with-action">
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <h2><i data-lucide="info"></i> 版本说明</h2>
+            <button id="refresh-version-btn" class="icon-btn" title="刷新">
+              <i data-lucide="refresh-cw"></i>
+            </button>
+          </div>
+          <button class="header-purchase-btn" data-purchase-trigger>
+            <i data-lucide="shopping-cart"></i>
+            <span>购买密钥</span>
+            <i data-lucide="arrow-right"></i>
+          </button>
+        </div>
+        
+        <div class="card">
+          <div class="card-header">
+            <h3>更新历史</h3>
+          </div>
+          <div class="card-body">
+            <div id="version-notes-list" class="version-notes-container">
+              <div class="empty-state">
+                <i data-lucide="loader" class="spin"></i>
+                <p>正在加载版本说明...</p>
+              </div>
             </div>
           </div>
         </div>

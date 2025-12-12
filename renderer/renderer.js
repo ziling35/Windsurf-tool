@@ -13,6 +13,131 @@ let versionUpdateRequired = false; // 是否需要更新
 
 // ===== 工具函数 =====
 
+// 初始化更多操作下拉菜单事件（使用事件委托）
+function initMoreActionsMenu() {
+  // 使用事件委托，在 document 级别监听点击事件
+  document.addEventListener('click', (e) => {
+    // 检查是否点击了"更多操作"按钮
+    const moreActionsBtn = e.target.closest('#more-actions-btn');
+    if (moreActionsBtn) {
+      e.stopPropagation();
+      const menu = document.getElementById('more-actions-menu');
+      if (menu) {
+        menu.classList.toggle('show');
+        try { lucide.createIcons(); } catch (err) {}
+      }
+      return;
+    }
+    
+    // 检查是否点击了下拉菜单项
+    const dropdownItem = e.target.closest('.dropdown-item');
+    if (dropdownItem) {
+      const menu = document.getElementById('more-actions-menu');
+      if (menu) {
+        menu.classList.remove('show');
+      }
+      // 不阻止事件，让按钮的原有事件处理器执行
+      return;
+    }
+    
+    // 点击其他地方关闭菜单
+    const menu = document.getElementById('more-actions-menu');
+    const btn = document.getElementById('more-actions-btn');
+    if (menu && btn && !btn.contains(e.target) && !menu.contains(e.target)) {
+      menu.classList.remove('show');
+    }
+  });
+}
+
+// 兼容旧代码的函数
+function bindMoreActionsMenu() {
+  // 事件委托已在 initMoreActionsMenu 中处理，这里不需要做任何事
+}
+
+// 自动保存防抖定时器
+const autoSaveTimers = {};
+
+// 初始化自动保存功能
+function initAutoSave() {
+  // 获取所有带有 auto-save 类的输入框
+  const autoSaveInputs = document.querySelectorAll('.auto-save');
+  
+  autoSaveInputs.forEach(input => {
+    const configKey = input.getAttribute('data-config-key');
+    if (!configKey) return;
+    
+    // 监听输入事件（使用防抖）
+    input.addEventListener('input', () => {
+      // 清除之前的定时器
+      if (autoSaveTimers[configKey]) {
+        clearTimeout(autoSaveTimers[configKey]);
+      }
+      
+      // 设置新的定时器（500ms 后保存）
+      autoSaveTimers[configKey] = setTimeout(async () => {
+        await saveConfigValue(configKey, input.value);
+      }, 500);
+    });
+    
+    // 监听 change 事件（用于选择器触发）
+    input.addEventListener('change', async () => {
+      // 清除防抖定时器
+      if (autoSaveTimers[configKey]) {
+        clearTimeout(autoSaveTimers[configKey]);
+      }
+      await saveConfigValue(configKey, input.value);
+    });
+    
+    // 监听失焦事件（立即保存）
+    input.addEventListener('blur', async () => {
+      // 清除防抖定时器
+      if (autoSaveTimers[configKey]) {
+        clearTimeout(autoSaveTimers[configKey]);
+      }
+      await saveConfigValue(configKey, input.value);
+    });
+  });
+  
+  log('自动保存功能已初始化', 'info');
+}
+
+// 保存配置值
+async function saveConfigValue(key, value) {
+  try {
+    const result = await window.electronAPI.saveConfig(key, value);
+    if (result.success) {
+      showToast('已保存', 'success', 1500);
+      log(`配置已保存: ${key}`, 'info');
+    }
+  } catch (error) {
+    console.error('保存配置失败:', error);
+  }
+}
+
+// 加载已保存的配置到输入框
+async function loadSavedConfigs() {
+  try {
+    const result = await window.electronAPI.getAllConfig();
+    if (!result.success || !result.data) return;
+    
+    const config = result.data;
+    
+    // 获取所有带有 auto-save 类的输入框
+    const autoSaveInputs = document.querySelectorAll('.auto-save');
+    
+    autoSaveInputs.forEach(input => {
+      const configKey = input.getAttribute('data-config-key');
+      if (configKey && config[configKey] !== undefined && config[configKey] !== null) {
+        input.value = config[configKey];
+      }
+    });
+    
+    log('已加载保存的配置', 'info');
+  } catch (error) {
+    console.error('加载配置失败:', error);
+  }
+}
+
 // Toast 通知
 function showToast(message, type = 'info', duration = 3000) {
   const container = document.getElementById('toast-container');
@@ -203,6 +328,22 @@ function log(message, type = 'info') {
   entry.textContent = `[${timestamp}] ${message}`;
   logOutput.appendChild(entry);
   logOutput.scrollTop = logOutput.scrollHeight;
+}
+
+function copyLogsToClipboard() {
+  const logOutput = document.getElementById('log-output');
+  if (!logOutput) return;
+  const text = (logOutput.textContent || '').trim();
+  if (!text) {
+    showToast('日志为空', 'info');
+    return;
+  }
+
+  navigator.clipboard.writeText(text).then(() => {
+    showToast('日志已复制到剪贴板', 'success');
+  }).catch(() => {
+    showToast('复制失败', 'error');
+  });
 }
 
 // Token 打码函数（仅显示前5、后5）
@@ -624,57 +765,67 @@ async function clearWorkspacePath() {
 
 // ===== 账号历史管理 =====
 
-// 加载账号历史
+// 加载账号历史（从服务器获取该密钥关联的账号）
 async function loadAccountHistory() {
   const historyList = document.getElementById('history-list');
   const historyTotal = document.getElementById('history-total');
   const historyMarked = document.getElementById('history-marked');
   
-  const result = await window.electronAPI.getAccountHistory();
+  // 显示加载状态
+  historyList.innerHTML = `
+    <div class="empty-state">
+      <i data-lucide="loader" class="spin"></i>
+      <p>正在加载账号历史...</p>
+    </div>
+  `;
+  lucide.createIcons();
   
-  if (result.success) {
-    const { accounts, stats } = result.data;
+  // 从服务器获取该密钥关联的账号历史
+  const result = await window.electronAPI.getServerAccountHistory();
+  
+  if (result.success && result.data) {
+    const { accounts, total } = result.data;
     
     // 更新统计
-    historyTotal.textContent = stats.total;
-    historyMarked.textContent = stats.marked;
+    historyTotal.textContent = total || 0;
+    historyMarked.textContent = '0'; // 服务器端没有标记功能
     
     // 清空列表
     historyList.innerHTML = '';
     
-    if (accounts.length === 0) {
+    if (!accounts || accounts.length === 0) {
       historyList.innerHTML = `
         <div class="empty-state">
           <i data-lucide="inbox"></i>
           <p>暂无历史账号</p>
+          <small style="color: #9ca3af;">该密钥尚未获取过账号</small>
         </div>
       `;
       lucide.createIcons();
       return;
     }
     
-    // 渲染账号列表
-    accounts.forEach(account => {
+    // 渲染账号列表（从服务器获取的账号）
+    accounts.forEach((account, index) => {
       const item = document.createElement('div');
-      item.className = `history-item ${account.marked ? 'marked' : ''}`;
+      item.className = 'history-item';
       item.innerHTML = `
         <div class="history-info">
           <div class="history-email">${account.email}</div>
-          <div class="history-label">${account.label || 'PaperCrane'}</div>
+          <div class="history-password" style="font-size: 0.85em; color: #6b7280; margin-top: 2px;">
+            密码: <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; user-select: all;">${account.password}</code>
+          </div>
           <div class="history-meta">
-            <span>使用 ${account.usedCount || 1} 次</span>
-            <span>最后使用: ${formatTime(account.lastUsed)}</span>
+            ${account.name ? `<span>名称: ${account.name}</span>` : ''}
+            ${account.assigned_at ? `<span>获取时间: ${formatTime(account.assigned_at)}</span>` : ''}
           </div>
         </div>
         <div class="history-actions">
-          <button class="history-btn switch-btn" title="切换到此账号" data-id="${account.id}">
+          <button class="history-btn copy-btn" title="复制账号密码" data-email="${account.email}" data-password="${account.password}">
+            <i data-lucide="copy"></i>
+          </button>
+          <button class="history-btn switch-server-btn" title="切换到此账号" data-email="${account.email}" data-password="${account.password}" data-apikey="${account.api_key || ''}">
             <i data-lucide="log-in"></i>
-          </button>
-          <button class="history-btn mark-btn ${account.marked ? 'marked' : ''}" title="${account.marked ? '取消标记' : '标记为已使用'}" data-id="${account.id}" data-marked="${account.marked}">
-            <i data-lucide="${account.marked ? 'check-square' : 'square'}"></i>
-          </button>
-          <button class="history-btn delete-btn" title="删除" data-id="${account.id}">
-            <i data-lucide="trash-2"></i>
           </button>
         </div>
       `;
@@ -686,13 +837,88 @@ async function loadAccountHistory() {
     lucide.createIcons();
     
     // 绑定事件
-    bindHistoryItemEvents();
+    bindServerHistoryItemEvents();
   } else {
+    // 服务器获取失败，显示错误
+    historyList.innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="alert-circle"></i>
+        <p>加载失败</p>
+        <small style="color: #ef4444;">${result.message || '请检查网络连接和密钥状态'}</small>
+      </div>
+    `;
+    lucide.createIcons();
     log(`加载历史账号失败: ${result.message}`, 'error');
   }
 }
 
-// 绑定历史账号列表事件
+// 绑定服务器账号历史列表事件
+function bindServerHistoryItemEvents() {
+  // 复制按钮
+  document.querySelectorAll('.history-btn.copy-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const email = btn.getAttribute('data-email');
+      const password = btn.getAttribute('data-password');
+      const text = `邮箱: ${email}\n密码: ${password}`;
+      
+      try {
+        await navigator.clipboard.writeText(text);
+        showToast('账号信息已复制到剪贴板', 'success');
+      } catch (e) {
+        showToast('复制失败', 'error');
+      }
+    });
+  });
+  
+  // 切换按钮（使用服务器账号数据）
+  document.querySelectorAll('.history-btn.switch-server-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const email = btn.getAttribute('data-email');
+      const password = btn.getAttribute('data-password');
+      const apiKey = btn.getAttribute('data-apikey');
+      
+      if (!apiKey) {
+        showToast('该账号没有 API Key，无法切换', 'error');
+        return;
+      }
+      
+      await switchToServerAccount(email, apiKey);
+    });
+  });
+}
+
+// 切换到服务器账号
+async function switchToServerAccount(email, apiKey) {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
+  const confirmed = await showModal('确认切换', `确定要切换到账号 ${email} 吗？\n\n这将关闭并重启 Windsurf。`);
+  if (!confirmed) return;
+  
+  log(`正在切换到账号: ${email}...`, 'info');
+  showToast('正在切换账号...', 'info');
+  
+  // 使用 switch-account 接口，传入 token (apiKey) 和 email
+  const result = await window.electronAPI.switchAccount({
+    token: apiKey,
+    email: email,
+    label: 'PaperCrane'
+  });
+  
+  if (result.success) {
+    showToast('账号切换成功！', 'success');
+    log('✅ 账号切换成功', 'success');
+  } else {
+    showToast(`切换失败: ${result.message}`, 'error');
+    log(`❌ 切换失败: ${result.message}`, 'error');
+  }
+}
+
+// 绑定历史账号列表事件（保留用于本地历史，但不再使用）
 function bindHistoryItemEvents() {
   // 切换按钮
   document.querySelectorAll('.history-btn.switch-btn').forEach(btn => {
@@ -708,14 +934,6 @@ function bindHistoryItemEvents() {
       const id = btn.getAttribute('data-id');
       const marked = btn.getAttribute('data-marked') === 'true';
       await markAccount(id, !marked);
-    });
-  });
-  
-  // 删除按钮
-  document.querySelectorAll('.history-btn.delete-btn').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const id = btn.getAttribute('data-id');
-      await deleteAccount(id);
     });
   });
 }
@@ -754,6 +972,119 @@ async function switchToHistoryAccount(id) {
     showToast(`切换失败: ${message}`, 'error');
     log(`❌ 切换失败: ${message}`, 'error');
   }
+}
+
+// ===== 版本说明管理 =====
+
+// 加载版本说明
+async function loadVersionNotes() {
+  const container = document.getElementById('version-notes-list');
+  if (!container) return;
+  
+  // 显示加载状态
+  container.innerHTML = `
+    <div class="empty-state">
+      <i data-lucide="loader" class="spin"></i>
+      <p>正在加载版本说明...</p>
+    </div>
+  `;
+  lucide.createIcons();
+  
+  try {
+    const result = await window.electronAPI.getVersionNotes();
+    
+    if (result.success && result.data && result.data.notes) {
+      const notes = result.data.notes;
+      
+      if (notes.length === 0) {
+        container.innerHTML = `
+          <div class="empty-state">
+            <i data-lucide="inbox"></i>
+            <p>暂无版本说明</p>
+          </div>
+        `;
+        lucide.createIcons();
+        return;
+      }
+      
+      // 渲染版本说明列表
+      container.innerHTML = notes.map((note, index) => `
+        <div class="version-note-item ${index === 0 ? 'expanded' : ''}">
+          <div class="version-note-header" onclick="toggleVersionNote(this)">
+            <div class="version-note-title">
+              <span class="version-note-version">v${note.version}</span>
+              <span class="version-note-name">${note.title}</span>
+            </div>
+            <div style="display: flex; align-items: center; gap: 12px;">
+              <span class="version-note-date">${formatVersionDate(note.release_date)}</span>
+              <i data-lucide="chevron-down" class="version-note-toggle"></i>
+            </div>
+          </div>
+          <div class="version-note-content">${formatVersionContent(note.content)}</div>
+        </div>
+      `).join('');
+      
+      lucide.createIcons();
+      log(`加载了 ${notes.length} 条版本说明`, 'info');
+    } else {
+      container.innerHTML = `
+        <div class="empty-state">
+          <i data-lucide="alert-circle"></i>
+          <p>加载失败</p>
+          <small style="color: #ef4444;">${result.message || '请检查网络连接'}</small>
+        </div>
+      `;
+      lucide.createIcons();
+    }
+  } catch (error) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <i data-lucide="alert-circle"></i>
+        <p>加载失败</p>
+        <small style="color: #ef4444;">${error.message}</small>
+      </div>
+    `;
+    lucide.createIcons();
+    log(`加载版本说明失败: ${error.message}`, 'error');
+  }
+}
+
+// 切换版本说明展开/收起
+function toggleVersionNote(header) {
+  const item = header.closest('.version-note-item');
+  item.classList.toggle('expanded');
+}
+
+// 格式化版本日期
+function formatVersionDate(dateStr) {
+  if (!dateStr) return '';
+  try {
+    const date = new Date(dateStr);
+    return date.toLocaleDateString('zh-CN', { year: 'numeric', month: 'long', day: 'numeric' });
+  } catch {
+    return dateStr;
+  }
+}
+
+// 格式化版本内容（简单的 Markdown 支持）
+function formatVersionContent(content) {
+  if (!content) return '';
+  // 转义 HTML
+  let html = content
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+  // 简单的 Markdown 支持
+  html = html
+    .replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')  // 粗体
+    .replace(/\*(.+?)\*/g, '<em>$1</em>')  // 斜体
+    .replace(/`(.+?)`/g, '<code>$1</code>')  // 行内代码
+    .replace(/^### (.+)$/gm, '<h4>$1</h4>')  // 三级标题
+    .replace(/^## (.+)$/gm, '<h3>$1</h3>')  // 二级标题
+    .replace(/^# (.+)$/gm, '<h2>$1</h2>')  // 一级标题
+    .replace(/^- (.+)$/gm, '• $1')  // 列表项
+    .replace(/\n/g, '<br>');  // 换行
+  return html;
 }
 
 // 标记账号
@@ -1248,6 +1579,276 @@ async function openPurchaseLink() {
 
 // ===== 插件管理功能 =====
 
+// 缓存的插件列表数据
+let cachedPluginList = null;
+
+// 从后端获取插件列表并动态渲染
+async function loadPluginList() {
+  const container = document.getElementById('plugins-container');
+  const loadingEl = document.getElementById('plugins-loading');
+  const fallbackCard = document.getElementById('fallback-plugin-card');
+  
+  if (!container) return;
+  
+  // 显示加载状态
+  if (loadingEl) loadingEl.style.display = 'block';
+  if (fallbackCard) fallbackCard.style.display = 'none';
+  
+  try {
+    log('📦 正在从服务器获取插件列表...', 'info');
+    const result = await window.electronAPI.getPluginList();
+    
+    // 无论后端返回结果如何，当前版本统一使用本地备用插件卡片，
+    // 避免动态卡片与既有 DOM ID / 事件绑定冲突导致按钮无响应。
+    if (result.success && result.data && result.data.plugins && result.data.plugins.length > 0) {
+      cachedPluginList = result.data.plugins;
+      log(`✅ 获取到 ${cachedPluginList.length} 个插件，使用本地插件卡片展示`, 'success');
+    } else {
+      log('⚠️ 未获取到插件列表，使用本地备用配置', 'warning');
+    }
+
+    // 始终显示备用插件卡片，并在内部调用 checkPluginStatus / fetchPluginServerInfo
+    showFallbackPluginCard();
+  } catch (error) {
+    console.error('获取插件列表失败:', error);
+    log(`❌ 获取插件列表失败: ${error.message}`, 'error');
+    showFallbackPluginCard();
+  }
+}
+
+// 显示备用插件卡片（当后端不可用时）
+function showFallbackPluginCard() {
+  const container = document.getElementById('plugins-container');
+  const loadingEl = document.getElementById('plugins-loading');
+  const fallbackCard = document.getElementById('fallback-plugin-card');
+  
+  if (loadingEl) loadingEl.style.display = 'none';
+  if (fallbackCard) {
+    fallbackCard.style.display = 'block';
+    // 将备用卡片移到容器中
+    if (container && !container.contains(fallbackCard)) {
+      container.appendChild(fallbackCard);
+    }
+  }
+  
+  try { lucide.createIcons(); } catch (e) {}
+  
+  // 检测插件状态
+  checkPluginStatus();
+}
+
+// 根据插件数据创建插件卡片 DOM
+function createPluginCard(plugin) {
+  const card = document.createElement('div');
+  card.className = 'info-card';
+  card.setAttribute('data-plugin-name', plugin.name);
+  
+  // 图标渐变色
+  const gradientColors = plugin.icon_gradient || ['#667eea', '#764ba2'];
+  const iconName = plugin.icon || 'puzzle';
+  
+  // 构建功能列表 HTML
+  let featuresHtml = '';
+  if (plugin.features && plugin.features.length > 0) {
+    featuresHtml = plugin.features.map(f => 
+      `<li><strong>${f.title}</strong>：${f.description}</li>`
+    ).join('');
+  }
+  
+  // 构建使用步骤 HTML
+  let stepsHtml = '';
+  if (plugin.usage_steps && plugin.usage_steps.length > 0) {
+    stepsHtml = plugin.usage_steps.map(s => 
+      `<li><strong>${s.title}</strong>：${s.description}</li>`
+    ).join('');
+  }
+  
+  // 构建提示 HTML
+  let tipsHtml = '';
+  if (plugin.tips && plugin.tips.length > 0) {
+    tipsHtml = plugin.tips.map(tip => {
+      const bgColor = tip.type === 'success' ? '#d1fae5' : tip.type === 'warning' ? '#fef3c7' : '#e5e7eb';
+      const borderColor = tip.type === 'success' ? '#10b981' : tip.type === 'warning' ? '#f59e0b' : '#6b7280';
+      const textColor = tip.type === 'success' ? '#065f46' : tip.type === 'warning' ? '#92400e' : '#374151';
+      return `
+        <div style="margin-top: 12px; padding: 12px; background: ${bgColor}; border-left: 3px solid ${borderColor}; border-radius: 6px;">
+          <strong style="color: ${textColor};">${tip.title}</strong>
+          <p style="margin: 8px 0 0 0; color: ${textColor};">${tip.content}</p>
+        </div>
+      `;
+    }).join('');
+  }
+  
+  // 判断是否是 Kiro 插件
+  const isKiro = plugin.ide_type === 'kiro';
+  const pluginId = plugin.name.replace(/-/g, '_');
+  
+  card.innerHTML = `
+    <div style="display: flex; align-items: center; gap: 15px; margin-bottom: 20px;">
+      <div style="width: 48px; height: 48px; background: linear-gradient(135deg, ${gradientColors[0]} 0%, ${gradientColors[1]} 100%); border-radius: 12px; display: flex; align-items: center; justify-content: center;">
+        <i data-lucide="${iconName}" style="color: white; width: 28px; height: 28px;"></i>
+      </div>
+      <div style="flex: 1;">
+        <h3 style="margin: 0 0 5px 0; font-size: 1.2em;">${plugin.display_name || plugin.name}</h3>
+        <p style="margin: 0; color: #6b7280; font-size: 0.9em;">${plugin.description || ''}</p>
+      </div>
+      <div id="plugin-status-badge-${pluginId}" class="status-badge" style="padding: 6px 12px; border-radius: 6px; font-size: 0.85em; font-weight: 500;">
+        <i data-lucide="loader" style="width: 14px; height: 14px; margin-right: 4px;"></i>
+        <span>检测中...</span>
+      </div>
+    </div>
+
+    ${featuresHtml ? `
+    <div class="info-section collapsible-section">
+      <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
+          功能介绍
+        </h4>
+      </div>
+      <div class="collapsible-content">
+        <ul style="margin: 10px 0 0 0; padding-left: 20px; color: #6b7280; line-height: 1.8;">
+          ${featuresHtml}
+        </ul>
+      </div>
+    </div>
+    ` : ''}
+
+    <div class="info-section" style="margin-top: 20px;">
+      <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">安装状态</h4>
+      <div id="plugin-status-details-${pluginId}" style="color: #6b7280; line-height: 1.8;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <i data-lucide="loader" id="plugin-installed-icon-${pluginId}" style="width: 16px; height: 16px;"></i>
+          <span id="plugin-installed-text-${pluginId}">检测中...</span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="loader" id="mcp-configured-icon-${pluginId}" style="width: 16px; height: 16px;"></i>
+          <span id="mcp-configured-text-${pluginId}">检测中...</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- 插件版本信息 -->
+    <div class="info-section" style="margin-top: 20px;">
+      <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">版本信息</h4>
+      <div style="color: #6b7280; line-height: 1.8;">
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <i data-lucide="package" style="width: 16px; height: 16px; color: #6b7280;"></i>
+          <span>本地版本：<strong id="plugin-local-version-${pluginId}">检测中...</strong></span>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
+          <i data-lucide="cloud" style="width: 16px; height: 16px; color: #6b7280;"></i>
+          <span>最新版本：<strong id="plugin-latest-version-${pluginId}">${plugin.latest_version || '未知'}</strong></span>
+        </div>
+        <div id="plugin-update-info-${pluginId}" style="display: none; margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
+          <strong style="color: #92400e;" id="plugin-update-title-${pluginId}">发现新版本</strong>
+          <p style="margin: 5px 0 0 0; color: #92400e; font-size: 0.9em;" id="plugin-update-desc-${pluginId}"></p>
+          <button id="update-plugin-btn-${pluginId}" class="btn btn-warning" style="margin-top: 10px; padding: 6px 12px; font-size: 0.85em;" onclick="updatePluginByName('${plugin.name}')">
+            <i data-lucide="download-cloud"></i>
+            <span>立即更新</span>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    ${!isKiro ? `
+    <!-- 工作目录配置 -->
+    <div class="info-section" style="margin-top: 20px;">
+      <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">工作目录</label>
+      <div class="key-input-row">
+        <input type="text" id="ai-rules-path" class="key-input auto-save" data-config-key="aiRulesPath" placeholder="留空则使用主页设置的工作目录" style="flex: 1;" />
+        <button id="select-ai-rules-path-btn" class="btn btn-secondary btn-small" title="选择工作目录">
+          <i data-lucide="folder"></i>
+          <span>选择</span>
+        </button>
+      </div>
+      <small style="display: block; margin-top: 4px; color: #6b7280;">AI 规则将安装到此目录，留空则使用主页设置的工作目录</small>
+    </div>
+    ` : ''}
+
+    <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
+      ${isKiro ? `
+      <button id="install-kiro-plugin-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="安装插件到 Kiro IDE" onclick="installPluginToKiro()">
+        <i data-lucide="download"></i>
+        <span>安装到 Kiro</span>
+      </button>
+      <button id="configure-kiro-mcp-btn" class="btn btn-primary" style="flex: 1; min-width: 140px;" title="配置 Kiro 的 MCP" onclick="configureKiroMCP()">
+        <i data-lucide="settings"></i>
+        <span>配置 Kiro MCP</span>
+      </button>
+      ` : `
+      <button id="install-plugin-btn" class="btn btn-primary" style="flex: 1; min-width: 160px;" title="安装或重新安装插件（自动完成全部配置并重启 Windsurf）">
+        <i data-lucide="download"></i>
+        <span>一键安装</span>
+      </button>
+      <button id="refresh-plugin-status-btn" class="icon-btn" title="刷新状态" onclick="checkPluginStatus()">
+        <i data-lucide="refresh-cw"></i>
+      </button>
+      <!-- 更多操作下拉菜单 -->
+      <div class="dropdown" style="position: relative;">
+        <button id="more-actions-btn" class="btn btn-secondary" title="更多操作" onclick="toggleMoreActionsMenu(event)">
+          <i data-lucide="more-horizontal"></i>
+          <span>更多操作</span>
+          <i data-lucide="chevron-down" style="width: 14px; height: 14px; margin-left: 4px;"></i>
+        </button>
+        <div id="more-actions-menu" class="dropdown-menu">
+          <button class="dropdown-item" id="activate-plugin-btn" title="同步激活码到插件" onclick="activatePlugin(); closeMoreActionsMenu();">
+            <i data-lucide="key"></i>
+            <span>激活插件</span>
+          </button>
+          <button class="dropdown-item" id="configure-mcp-btn" title="配置或重新配置 MCP" onclick="configureMCP(); closeMoreActionsMenu();">
+            <i data-lucide="settings"></i>
+            <span>配置 MCP</span>
+          </button>
+          <button class="dropdown-item" id="install-rules-btn" title="安装AI规则" onclick="installAIRules(); closeMoreActionsMenu();">
+            <i data-lucide="file-text"></i>
+            <span>安装 AI 规则</span>
+          </button>
+          <div style="border-top: 1px solid #e5e7eb; margin: 4px 0;"></div>
+          <button class="dropdown-item" id="clear-cache-btn" title="清除插件相关缓存" onclick="clearPluginCache(); closeMoreActionsMenu();">
+            <i data-lucide="trash-2"></i>
+            <span>清除缓存</span>
+          </button>
+        </div>
+      </div>
+      `}
+    </div>
+
+    ${stepsHtml || tipsHtml ? `
+    <!-- 使用说明（可折叠） -->
+    <div class="info-section collapsible-section" style="margin-top: 20px;">
+      <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
+          使用说明
+        </h4>
+      </div>
+      <div class="collapsible-content">
+        <div style="color: #6b7280; line-height: 1.8; margin-top: 10px;">
+          ${stepsHtml ? `
+          <ol style="padding-left: 20px; margin: 0;">
+            ${stepsHtml}
+          </ol>
+          <p style="margin-top: 10px; font-size: 0.9em; color: #9ca3af;">💡 如需单独操作，可点击"更多操作"按钮</p>
+          ` : ''}
+          ${tipsHtml}
+        </div>
+      </div>
+    </div>
+    ` : ''}
+  `;
+  
+  return card;
+}
+
+// 刷新插件列表
+async function refreshPluginList() {
+  log('🔄 刷新插件列表...', 'info');
+  showToast('正在刷新插件列表...', 'info');
+  await loadPluginList();
+  showToast('插件列表已刷新', 'success');
+}
+
 // 检测插件状态
 async function checkPluginStatus() {
   const statusBadge = document.getElementById('plugin-status-badge');
@@ -1272,7 +1873,14 @@ async function checkPluginStatus() {
       return;
     }
     
-    const { pluginInstalled, mcpConfigured } = result.data;
+    const { pluginInstalled, mcpConfigured, pluginReason } = result.data;
+    
+    // 记录检测结果到日志
+    if (pluginInstalled) {
+      log(`✅ 插件状态: ${pluginReason || '已安装'}`, 'success');
+    } else {
+      log(`❌ 插件状态: ${pluginReason || '未安装'}`, 'warning');
+    }
     
     // 更新安装状态 - 按钮始终可用，支持重新安装
     if (pluginInstalled) {
@@ -1292,6 +1900,7 @@ async function checkPluginStatus() {
       installedIcon.style.color = '#ef4444';
       installedText.textContent = '插件未安装';
       installedText.style.color = '#ef4444';
+      installedText.title = pluginReason || '插件未安装';
       
       installBtn.disabled = false;
       installBtn.innerHTML = '<i data-lucide="download"></i><span>一键安装</span>';
@@ -1338,65 +1947,256 @@ async function checkPluginStatus() {
     // 重新渲染图标
     try { lucide.createIcons(); } catch (e) {}
     
+    // 同时获取服务器端插件信息
+    await fetchPluginServerInfo();
+    
   } catch (error) {
     showToast(`检测失败: ${error.message}`, 'error');
     log(`❌ 检测插件状态失败: ${error.message}`, 'error');
   }
 }
 
-// 安装插件（自动关闭 Windsurf、清除缓存、配置 MCP）
-async function installPlugin() {
-  const btn = document.getElementById('install-plugin-btn');
-  const originalHtml = btn.innerHTML;
+// 保存插件更新信息（用于更新按钮）
+let pluginUpdateInfo = null;
+
+// 从服务器获取插件信息并检查更新
+async function fetchPluginServerInfo() {
+  const localVersionEl = document.getElementById('plugin-local-version');
+  const latestVersionEl = document.getElementById('plugin-latest-version');
+  const updateInfoEl = document.getElementById('plugin-update-info');
+  const updateTitleEl = document.getElementById('plugin-update-title');
+  const updateDescEl = document.getElementById('plugin-update-desc');
+  const updateBtn = document.getElementById('update-plugin-btn');
   
-  btn.disabled = true;
-  btn.innerHTML = '<i data-lucide="loader"></i><span>安装中...</span>';
-  try { lucide.createIcons(); } catch (e) {}
-  
-  log('开始安装插件...', 'info');
-  showToast('正在安装插件，请稍候...', 'info');
+  // 获取本地插件版本（从内置的 VSIX 文件名推断，或从已安装插件读取）
+  const localVersion = '1.0.0'; // 当前内置版本
+  if (localVersionEl) {
+    localVersionEl.textContent = localVersion;
+  }
   
   try {
-    const result = await window.electronAPI.installPlugin();
+    // 检查插件更新
+    const updateResult = await window.electronAPI.checkPluginUpdate({
+      pluginName: 'windsurf-continue-pro',
+      clientVersion: localVersion
+    });
+    
+    if (updateResult.success && updateResult.data) {
+      const { has_update, latest_version, update_title, update_description, download_url, is_force_update } = updateResult.data;
+      
+      // 保存更新信息
+      pluginUpdateInfo = {
+        latestVersion: latest_version,
+        downloadUrl: download_url,
+        hasUpdate: has_update,
+        isForceUpdate: is_force_update
+      };
+      
+      if (latestVersionEl) {
+        latestVersionEl.textContent = latest_version || localVersion;
+        if (has_update) {
+          latestVersionEl.style.color = '#f59e0b';
+        } else {
+          latestVersionEl.style.color = '#10b981';
+        }
+      }
+      
+      if (has_update && updateInfoEl) {
+        updateInfoEl.style.display = 'block';
+        if (updateTitleEl) {
+          updateTitleEl.textContent = update_title || '发现新版本';
+        }
+        if (updateDescEl) {
+          updateDescEl.textContent = update_description || `新版本 ${latest_version} 可用，建议更新。`;
+        }
+        if (is_force_update) {
+          updateInfoEl.style.background = '#fee2e2';
+          updateInfoEl.style.borderColor = '#ef4444';
+          if (updateTitleEl) updateTitleEl.style.color = '#991b1b';
+          if (updateDescEl) updateDescEl.style.color = '#991b1b';
+        }
+        log(`📦 发现插件新版本: ${latest_version}`, 'info');
+      } else if (updateInfoEl) {
+        updateInfoEl.style.display = 'none';
+      }
+    } else {
+      pluginUpdateInfo = null;
+      if (latestVersionEl) {
+        latestVersionEl.textContent = '获取失败';
+        latestVersionEl.style.color = '#6b7280';
+      }
+    }
+  } catch (error) {
+    console.error('获取插件信息失败:', error);
+    pluginUpdateInfo = null;
+    if (latestVersionEl) {
+      latestVersionEl.textContent = '获取失败';
+      latestVersionEl.style.color = '#6b7280';
+    }
+  }
+  
+  try { lucide.createIcons(); } catch (e) {}
+}
+
+// 更新插件（从服务器下载最新版本）
+async function updatePlugin() {
+  if (!pluginUpdateInfo || !pluginUpdateInfo.hasUpdate) {
+    showToast('当前已是最新版本', 'info');
+    return;
+  }
+  
+  if (!pluginUpdateInfo.downloadUrl) {
+    showToast('无法获取下载地址，请稍后重试', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('update-plugin-btn');
+  const originalHtml = btn ? btn.innerHTML : '';
+  
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader"></i><span>更新中...</span>`;
+    try { lucide.createIcons(); } catch (e) {}
+  }
+  
+  log(`🔄 开始更新插件到 ${pluginUpdateInfo.latestVersion}...`, 'info');
+  showToast('正在更新插件，请稍候...', 'info');
+  
+  try {
+    const result = await window.electronAPI.updatePlugin({
+      targetVersion: pluginUpdateInfo.latestVersion,
+      downloadUrl: pluginUpdateInfo.downloadUrl
+    });
     
     if (result.success) {
-      showToast('插件安装成功！', 'success');
-      log(`✅ ${result.message}`, 'success');
+      log(`✅ 插件更新成功: ${pluginUpdateInfo.latestVersion}`, 'success');
+      showToast('插件更新成功！', 'success');
       
       // 刷新状态
-      setTimeout(() => checkPluginStatus(), 1000);
+      await checkPluginStatus();
+      await fetchPluginServerInfo();
       
-      // 恢复按钮
-      btn.disabled = false;
-      btn.innerHTML = originalHtml;
-      try { lucide.createIcons(); } catch (e) {}
-      
-      // 提示用户下一步操作
-      setTimeout(async () => {
-        const action = await showModal(
-          '安装成功',
-          '插件安装成功！MCP 已自动配置。\n\n' +
-          '接下来请：\n' +
-          '1. 点击"激活插件"同步激活码\n' +
-          '2. 启动 Windsurf\n\n' +
-          '是否现在激活插件？'
-        );
-        
-        if (action) {
-          await activatePlugin();
+      // 自动启动 Windsurf
+      if (result.wasRunning) {
+        log('🚀 正在启动 Windsurf...', 'info');
+        const launchResult = await window.electronAPI.launchWindsurf();
+        if (launchResult.success) {
+          log('✅ Windsurf 已启动', 'success');
+          showToast('Windsurf 已启动，更新将自动生效！', 'success');
         }
-      }, 500);
+      }
     } else {
-      showToast(`安装失败: ${result.message}`, 'error');
-      log(`❌ 安装失败: ${result.message}`, 'error');
-      
+      log(`❌ 插件更新失败: ${result.message}`, 'error');
+      showToast(`更新失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    log(`❌ 插件更新失败: ${error.message}`, 'error');
+    showToast(`更新失败: ${error.message}`, 'error');
+  } finally {
+    if (btn) {
       btn.disabled = false;
       btn.innerHTML = originalHtml;
       try { lucide.createIcons(); } catch (e) {}
     }
+  }
+}
+
+// 安装插件（一键完成：安装、激活、配置MCP、安装规则、重启Windsurf）
+async function installPlugin() {
+  const btn = document.getElementById('install-plugin-btn');
+  const originalHtml = btn.innerHTML;
+  
+  const updateBtnStatus = (text) => {
+    btn.innerHTML = `<i data-lucide="loader"></i><span>${text}</span>`;
+    try { lucide.createIcons(); } catch (e) {}
+  };
+  
+  btn.disabled = true;
+  updateBtnStatus('安装中...');
+  
+  log('🚀 开始一键安装流程...', 'info');
+  showToast('正在执行一键安装，请稍候...', 'info');
+  
+  try {
+    // 步骤1: 安装插件
+    log('📦 步骤 1/4: 安装插件...', 'info');
+    updateBtnStatus('安装插件...');
+    const installTimeoutMs = 5 * 60 * 1000;
+    const installResult = await Promise.race([
+      window.electronAPI.installPlugin(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('安装超时，请检查网络或稍后重试')), installTimeoutMs))
+    ]);
+    
+    if (!installResult.success) {
+      const errorMsg = `安装插件失败: ${installResult.message}`;
+      log(`❌ ${errorMsg}`, 'error');
+      throw new Error(errorMsg);
+    }
+    log('✅ 插件安装成功', 'success');
+    
+    // 步骤2: 激活插件（同步激活码）
+    log('🔑 步骤 2/4: 激活插件...', 'info');
+    updateBtnStatus('激活插件...');
+    const activateResult = await window.electronAPI.activatePlugin();
+    
+    if (!activateResult.success) {
+      // 激活失败不中断流程，可能是没有激活码
+      log(`⚠️ 激活插件跳过: ${activateResult.message}`, 'warning');
+    } else {
+      log('✅ 插件激活成功', 'success');
+    }
+    
+    // 步骤3: 配置 MCP
+    log('⚙️ 步骤 3/4: 配置 MCP...', 'info');
+    updateBtnStatus('配置 MCP...');
+    const mcpResult = await window.electronAPI.configureMCP();
+    
+    if (!mcpResult.success) {
+      log(`⚠️ MCP 配置跳过: ${mcpResult.message}`, 'warning');
+    } else {
+      log('✅ MCP 配置成功', 'success');
+    }
+    
+    // 步骤4: 安装 AI 规则（如果有工作区）
+    log('📝 步骤 4/4: 安装 AI 规则...', 'info');
+    updateBtnStatus('安装规则...');
+    const rulesResult = await window.electronAPI.installAIRules();
+    
+    if (!rulesResult.success) {
+      log(`⚠️ AI 规则安装跳过: ${rulesResult.message}`, 'warning');
+    } else {
+      log('✅ AI 规则安装成功', 'success');
+    }
+    
+    // 刷新状态
+    await checkPluginStatus();
+    
+    // 完成提示
+    log('🎉 一键安装完成！', 'success');
+    showToast('一键安装完成！正在启动 Windsurf...', 'success');
+    
+    // 自动启动 Windsurf（安装过程中已经关闭了 Windsurf）
+    updateBtnStatus('启动 Windsurf...');
+    
+    // 等待 2 秒确保文件系统同步完成
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    
+    const launchResult = await window.electronAPI.launchWindsurf();
+    if (launchResult.success) {
+      log('✅ Windsurf 已启动', 'success');
+      showToast('Windsurf 已启动，插件将自动生效！', 'success');
+    } else {
+      log(`⚠️ Windsurf 启动失败: ${launchResult.message}`, 'warning');
+      showToast('请手动启动 Windsurf', 'info');
+    }
+    
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+    
   } catch (error) {
     showToast(`安装失败: ${error.message}`, 'error');
-    log(`❌ 安装失败: ${error.message}`, 'error');
+    log(`❌ 一键安装失败: ${error.message}`, 'error');
     
     btn.disabled = false;
     btn.innerHTML = originalHtml;
@@ -1407,6 +2207,8 @@ async function installPlugin() {
 // 激活插件
 async function activatePlugin() {
   const btn = document.getElementById('activate-plugin-btn');
+  if (!btn) return;
+  
   const originalHtml = btn.innerHTML;
   
   btn.disabled = true;
@@ -1420,36 +2222,32 @@ async function activatePlugin() {
     const result = await window.electronAPI.activatePlugin();
     
     if (result.success) {
-      showToast(result.message, 'success');
+      showToast('激活成功！正在重启 Windsurf...', 'success');
       log(`✅ ${result.message}`, 'success');
       
-      // 提示用户重启
-      setTimeout(async () => {
-        const confirmed = await showModal(
-          '激活成功',
-          '激活码已同步到插件！\n\n请重启 Windsurf 使插件自动激活。\n\n是否现在重启 Windsurf？'
-        );
-        
-        if (confirmed) {
-          log('用户确认重启 Windsurf', 'info');
-          const killResult = await window.electronAPI.killWindsurf();
-          if (killResult.success) {
-            showToast('Windsurf 已关闭，请手动重启', 'success');
-          }
-        }
-      }, 1000);
+      // 自动重启 Windsurf
+      const killResult = await window.electronAPI.killWindsurf();
+      if (killResult.success) {
+        log('✅ Windsurf 已关闭', 'info');
+      }
+      
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+      const launchResult = await window.electronAPI.launchWindsurf();
+      if (launchResult.success) {
+        log('✅ Windsurf 已启动', 'success');
+        showToast('Windsurf 已重启，插件将自动生效！', 'success');
+      } else {
+        showToast('请手动启动 Windsurf', 'info');
+      }
     } else {
       showToast(`激活失败: ${result.message}`, 'error');
       log(`❌ 激活失败: ${result.message}`, 'error');
-      
-      btn.disabled = false;
-      btn.innerHTML = originalHtml;
-      try { lucide.createIcons(); } catch (e) {}
     }
   } catch (error) {
     showToast(`激活失败: ${error.message}`, 'error');
     log(`❌ 激活失败: ${error.message}`, 'error');
-    
+  } finally {
     btn.disabled = false;
     btn.innerHTML = originalHtml;
     try { lucide.createIcons(); } catch (e) {}
@@ -2008,9 +2806,14 @@ function initNavigation() {
         loadAccountHistory();
       }
       
-      // 如果切换到插件管理页面，检测插件状态
+      // 如果切换到插件管理页面，加载插件列表
       if (targetPage === 'plugins') {
-        checkPluginStatus();
+        loadPluginList();
+      }
+      
+      // 如果切换到版本说明页面，加载版本说明
+      if (targetPage === 'version') {
+        loadVersionNotes();
       }
       
       // 重新渲染图标
@@ -2137,6 +2940,9 @@ function showForceUpdateModal(message, serverVersion) {
 
 document.addEventListener('DOMContentLoaded', () => {
   log('🎐 PaperCrane-Windsurf 已启动', 'success');
+  
+  // 初始化更多操作下拉菜单事件委托
+  initMoreActionsMenu();
   
   // 动态设置版本号显示
   const versionElement = document.querySelector('.sidebar-version');
@@ -2327,9 +3133,13 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // ===== 公告关闭按钮（保留用于兼容） =====
   document.getElementById('close-announcement-btn')?.addEventListener('click', closeAnnouncement);
+
+  // ===== 日志页面操作 =====
+  document.getElementById('copy-logs-btn')?.addEventListener('click', copyLogsToClipboard);
   
   // ===== 插件管理页面事件绑定 =====
   document.getElementById('install-plugin-btn')?.addEventListener('click', installPlugin);
+  document.getElementById('update-plugin-btn')?.addEventListener('click', updatePlugin);
   document.getElementById('activate-plugin-btn')?.addEventListener('click', activatePlugin);
   document.getElementById('configure-mcp-btn')?.addEventListener('click', configureMCP);
   document.getElementById('clear-cache-btn')?.addEventListener('click', clearPluginCache);
@@ -2337,13 +3147,39 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('install-kiro-plugin-btn')?.addEventListener('click', installPluginToKiro);
   document.getElementById('configure-kiro-mcp-btn')?.addEventListener('click', configureKiroMCP);
   document.getElementById('refresh-plugin-status-btn')?.addEventListener('click', checkPluginStatus);
+  document.getElementById('refresh-plugins-btn')?.addEventListener('click', refreshPluginList);
+  
+  // ===== 版本说明页面事件绑定 =====
+  document.getElementById('refresh-version-btn')?.addEventListener('click', loadVersionNotes);
+  
+  // ===== 更多操作下拉菜单 =====
+  bindMoreActionsMenu();
+  
+  // AI 规则路径选择按钮
+  document.getElementById('select-ai-rules-path-btn')?.addEventListener('click', async () => {
+    try {
+      const result = await window.electronAPI.selectFolder();
+      if (result.success && result.path) {
+        const input = document.getElementById('ai-rules-path');
+        input.value = result.path;
+        // 触发自动保存
+        input.dispatchEvent(new Event('change'));
+        log(`选择了 AI 规则安装目录: ${result.path}`, 'info');
+      }
+    } catch (error) {
+      showToast(`选择目录失败: ${error.message}`, 'error');
+    }
+  });
   
   // Kiro 路径选择按钮
   document.getElementById('select-kiro-path-btn')?.addEventListener('click', async () => {
     try {
       const result = await window.electronAPI.selectFolder();
       if (result.success && result.path) {
-        document.getElementById('kiro-settings-path').value = result.path;
+        const input = document.getElementById('kiro-settings-path');
+        input.value = result.path;
+        // 触发自动保存
+        input.dispatchEvent(new Event('change'));
         log(`选择了 Kiro 配置目录: ${result.path}`, 'info');
       }
     } catch (error) {
@@ -2354,15 +3190,24 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('select-mcp-server-btn')?.addEventListener('click', async () => {
     try {
       const result = await window.electronAPI.selectFile({
-        title: '选择 MCP 服务器文件',
-        filters: [{ name: 'JavaScript', extensions: ['js'] }]
+        title: '选择 MCP 服务器文件或目录',
+        allowDirectory: true
       });
       if (result.success && result.path) {
-        document.getElementById('kiro-mcp-server-path').value = result.path;
-        log(`选择了 MCP 服务器文件: ${result.path}`, 'info');
+        const input = document.getElementById('kiro-mcp-server-path');
+        input.value = result.path;
+        // 触发自动保存
+        input.dispatchEvent(new Event('change'));
+        log(`选择了 MCP 服务器路径: ${result.path}`, 'info');
       }
     } catch (error) {
-      showToast(`选择文件失败: ${error.message}`, 'error');
+      showToast(`选择路径失败: ${error.message}`, 'error');
     }
   });
+  
+  // ===== 自动保存功能 =====
+  initAutoSave();
+  
+  // 加载已保存的配置到输入框
+  loadSavedConfigs();
 });

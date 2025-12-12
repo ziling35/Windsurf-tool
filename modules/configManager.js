@@ -138,6 +138,21 @@ class ConfigManager {
   getAllConfig() {
     return { ...this.config };
   }
+
+  /**
+   * 获取指定配置项
+   */
+  getConfigValue(key) {
+    return this.config[key];
+  }
+
+  /**
+   * 设置指定配置项
+   */
+  setConfigValue(key, value) {
+    this.config[key] = value;
+    return this.saveConfig();
+  }
 }
 
 module.exports = ConfigManager;

@@ -65,8 +65,23 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // ===== 账号历史管理 API =====
   
-  // 获取账号历史
+  // 获取本地账号历史
   getAccountHistory: () => ipcRenderer.invoke('get-account-history'),
+  
+  // 从服务器获取该密钥关联的账号历史
+  getServerAccountHistory: () => ipcRenderer.invoke('get-server-account-history'),
+  
+  // 保存配置项
+  saveConfig: (key, value) => ipcRenderer.invoke('save-config', { key, value }),
+  
+  // 获取配置项
+  getConfig: (key) => ipcRenderer.invoke('get-config', key),
+  
+  // 获取所有配置
+  getAllConfig: () => ipcRenderer.invoke('get-all-config'),
+  
+  // 获取版本说明
+  getVersionNotes: () => ipcRenderer.invoke('get-version-notes'),
   
   // 标记账号
   markAccount: (id, marked) => ipcRenderer.invoke('mark-account', { id, marked }),
@@ -88,8 +103,20 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 检测插件状态
   checkPluginStatus: () => ipcRenderer.invoke('check-plugin-status'),
   
+  // 获取插件列表（从服务器）
+  getPluginList: () => ipcRenderer.invoke('get-plugin-list'),
+  
+  // 获取插件信息（从服务器）
+  getPluginInfo: (pluginName) => ipcRenderer.invoke('get-plugin-info', pluginName),
+  
+  // 检查插件更新
+  checkPluginUpdate: (options) => ipcRenderer.invoke('check-plugin-update', options),
+  
   // 安装插件
   installPlugin: () => ipcRenderer.invoke('install-plugin'),
+  
+  // 更新插件（从服务器下载最新版本）
+  updatePlugin: (options) => ipcRenderer.invoke('update-plugin', options),
   
   // 激活插件
   activatePlugin: () => ipcRenderer.invoke('activate-plugin'),
