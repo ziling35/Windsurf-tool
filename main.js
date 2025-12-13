@@ -1405,6 +1405,112 @@ ipcMain.handle('install-plugin', async (event) => {
       });
     };
     
+    // ========== 第一步：清理损坏的 extensions.json 引用（在关闭 Windsurf 之前） ==========
+    // 这样可以避免 Windsurf 重启时读取到损坏的引用
+    console.log('[安装插件] ========== 开始清理 extensions.json ==========');
+    sendProgress('cleanup-json', '⏳ 清理损坏的插件引用...');
+    const extensionsPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
+    const extensionsJsonPath = path.join(extensionsPath, 'extensions.json');
+    
+    if (fs.existsSync(extensionsJsonPath)) {
+      try {
+        console.log('[安装插件] 读取 extensions.json:', extensionsJsonPath);
+        const jsonContent = fs.readFileSync(extensionsJsonPath, 'utf-8');
+        const extensions = JSON.parse(jsonContent);
+        console.log('[安装插件] 当前扩展数量:', extensions.length);
+        
+        if (Array.isArray(extensions) && extensions.length > 0) {
+          // 过滤掉损坏的插件引用（文件不存在但仍在 JSON 中）
+          const validExtensions = extensions.filter(ext => {
+            if (!ext.location || !ext.location.fsPath) {
+              console.log('[安装插件] 发现无效扩展（缺少 location）:', ext.identifier?.id || '未知');
+              return false;
+            }
+            
+            // 检查是否是我们的插件
+            const isOurPlugin = ext.identifier && 
+              (ext.identifier.id === 'papercrane-team.windsurf-continue-pro' ||
+               ext.identifier.id === 'undefined_publisher.windsurf-continue-pro' ||
+               ext.identifier.id === 'windsurf-continue-pro' ||
+               ext.identifier.id.includes('windsurf-continue-pro') ||
+               ext.identifier.id.includes('ask-continue'));
+            
+            if (isOurPlugin) {
+              // 检查插件目录是否存在
+              const pluginExists = fs.existsSync(ext.location.fsPath);
+              console.log(`[安装插件] 检查插件: ${ext.identifier.id}`);
+              console.log(`[安装插件]   路径: ${ext.location.fsPath}`);
+              console.log(`[安装插件]   存在: ${pluginExists}`);
+              
+              if (!pluginExists) {
+                console.log(`[安装插件] ❌ 发现损坏的插件引用，将删除: ${ext.identifier.id}`);
+                event.sender.send('switch-progress', { 
+                  step: 'info', 
+                  message: `[${currentStep}/${TOTAL_STEPS}] 🗑️ 删除损坏的引用: ${ext.identifier.id}` 
+                });
+                return false; // 过滤掉这个损坏的引用
+              } else {
+                console.log(`[安装插件] ✅ 插件目录存在，保留引用`);
+              }
+            }
+            
+            return true; // 保留其他正常的扩展
+          });
+          
+          // 如果有损坏的引用被清理，更新 JSON 文件
+          if (validExtensions.length !== extensions.length) {
+            const removedCount = extensions.length - validExtensions.length;
+            console.log(`[安装插件] 清理了 ${removedCount} 个损坏的插件引用`);
+            console.log('[安装插件] 写入更新后的 extensions.json...');
+            
+            // 确保文件可写
+            try {
+              fs.chmodSync(extensionsJsonPath, 0o666);
+            } catch (chmodErr) {
+              console.warn('[安装插件] 无法修改文件权限:', chmodErr.message);
+            }
+            
+            fs.writeFileSync(extensionsJsonPath, JSON.stringify(validExtensions, null, 2), 'utf-8');
+            console.log('[安装插件] ✅ extensions.json 已修复');
+            event.sender.send('switch-progress', { 
+              step: 'info', 
+              message: `[${currentStep}/${TOTAL_STEPS}] ✅ 已删除 ${removedCount} 个损坏的引用` 
+            });
+          } else {
+            console.log('[安装插件] ✅ extensions.json 无需修复（无损坏引用）');
+          }
+        } else {
+          console.log('[安装插件] extensions.json 为空或不是数组');
+        }
+      } catch (err) {
+        console.error('[安装插件] ⚠️ 清理 extensions.json 失败:', err.message);
+        console.error('[安装插件] 错误堆栈:', err.stack);
+        
+        // 如果解析失败，尝试备份并重置为空数组
+        try {
+          const backupPath = extensionsJsonPath + '.backup.' + Date.now();
+          console.log('[安装插件] 备份损坏的 extensions.json...');
+          fs.copyFileSync(extensionsJsonPath, backupPath);
+          console.log(`[安装插件] 已备份到: ${backupPath}`);
+          
+          console.log('[安装插件] 重置 extensions.json 为空数组...');
+          fs.writeFileSync(extensionsJsonPath, '[]', 'utf-8');
+          console.log('[安装插件] ✅ 已重置 extensions.json');
+          
+          event.sender.send('switch-progress', { 
+            step: 'info', 
+            message: `[${currentStep}/${TOTAL_STEPS}] ✅ 已重置损坏的配置文件` 
+          });
+        } catch (resetErr) {
+          console.error('[安装插件] ❌ 重置 extensions.json 失败:', resetErr.message);
+          console.error('[安装插件] 错误堆栈:', resetErr.stack);
+        }
+      }
+    } else {
+      console.log('[安装插件] extensions.json 不存在，无需清理');
+    }
+    console.log('[安装插件] ========== extensions.json 清理完成 ==========');
+    
     // 检测 Windsurf 是否正在运行
     const isRunning = await processMonitor.isWindsurfRunning();
     if (isRunning) {
@@ -1497,8 +1603,6 @@ ipcMain.handle('install-plugin', async (event) => {
     // 手动清除插件相关缓存（确保彻底清理）
     console.log('[安装插件] 手动清除插件文件...');
     sendProgress('cleanup', '⏳ 清除插件文件...');
-    
-    const extensionsPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
     if (fs.existsSync(extensionsPath)) {
       const extensions = fs.readdirSync(extensionsPath);
       const targetExts = extensions.filter(ext => ext.includes('windsurf-continue-pro') || ext.includes('ask-continue'));
@@ -1584,6 +1688,68 @@ ipcMain.handle('install-plugin', async (event) => {
         console.warn('[安装插件] 清除工作区状态失败:', err.message);
       }
     }
+    
+    // ========== 再次清理 extensions.json（删除插件目录后，清理残留的引用） ==========
+    console.log('[安装插件] ========== 再次清理 extensions.json ==========');
+    sendProgress('cleanup-json-2', '⏳ 清理残留的插件引用...');
+    
+    if (fs.existsSync(extensionsJsonPath)) {
+      try {
+        console.log('[安装插件] 读取 extensions.json:', extensionsJsonPath);
+        const jsonContent = fs.readFileSync(extensionsJsonPath, 'utf-8');
+        const extensions = JSON.parse(jsonContent);
+        console.log('[安装插件] 当前扩展数量:', extensions.length);
+        
+        if (Array.isArray(extensions) && extensions.length > 0) {
+          // 过滤掉所有我们的插件引用（无论目录是否存在）
+          const validExtensions = extensions.filter(ext => {
+            if (!ext.identifier) {
+              return true; // 保留没有 identifier 的扩展
+            }
+            
+            // 检查是否是我们的插件
+            const isOurPlugin = ext.identifier.id === 'papercrane-team.windsurf-continue-pro' ||
+              ext.identifier.id === 'undefined_publisher.windsurf-continue-pro' ||
+              ext.identifier.id === 'windsurf-continue-pro' ||
+              ext.identifier.id.includes('windsurf-continue-pro') ||
+              ext.identifier.id.includes('ask-continue');
+            
+            if (isOurPlugin) {
+              console.log(`[安装插件] 🗑️ 删除插件引用: ${ext.identifier.id}`);
+              return false; // 删除所有我们的插件引用
+            }
+            
+            return true; // 保留其他扩展
+          });
+          
+          // 如果有引用被清理，更新 JSON 文件
+          if (validExtensions.length !== extensions.length) {
+            const removedCount = extensions.length - validExtensions.length;
+            console.log(`[安装插件] 清理了 ${removedCount} 个插件引用`);
+            console.log('[安装插件] 写入更新后的 extensions.json...');
+            
+            // 确保文件可写
+            try {
+              fs.chmodSync(extensionsJsonPath, 0o666);
+            } catch (chmodErr) {
+              console.warn('[安装插件] 无法修改文件权限:', chmodErr.message);
+            }
+            
+            fs.writeFileSync(extensionsJsonPath, JSON.stringify(validExtensions, null, 2), 'utf-8');
+            console.log('[安装插件] ✅ extensions.json 已清理');
+            event.sender.send('switch-progress', { 
+              step: 'info', 
+              message: `[${currentStep}/${TOTAL_STEPS}] ✅ 已删除 ${removedCount} 个插件引用` 
+            });
+          } else {
+            console.log('[安装插件] ✅ extensions.json 无需清理（无插件引用）');
+          }
+        }
+      } catch (err) {
+        console.error('[安装插件] ⚠️ 清理 extensions.json 失败:', err.message);
+      }
+    }
+    console.log('[安装插件] ========== extensions.json 清理完成 ==========');
     
     console.log('[安装插件] ✅ 旧插件清理完成');
     sendProgress('cleaned', '✅ 旧插件已清理');
@@ -1806,6 +1972,23 @@ ipcMain.handle('install-plugin', async (event) => {
           const scriptContent = `# Windsurf Continue Pro 延迟安装脚本
 Write-Host "等待 3 秒后开始安装..." -ForegroundColor Cyan
 Start-Sleep -Seconds 3
+
+Write-Host "正在卸载旧版本插件..." -ForegroundColor Yellow
+$pluginIds = @(
+    "undefined_publisher.windsurf-continue-pro",
+    "papercrane.windsurf-continue-pro",
+    "windsurf-continue-pro"
+)
+
+foreach ($pluginId in $pluginIds) {
+    try {
+        Write-Host "  尝试卸载: $pluginId" -ForegroundColor Gray
+        & "${cliPath}" --uninstall-extension "$pluginId" 2>$null
+        Start-Sleep -Milliseconds 500
+    } catch {
+        # 忽略卸载错误（插件可能不存在）
+    }
+}
 
 Write-Host "正在安装 Windsurf Continue Pro..." -ForegroundColor Yellow
 try {

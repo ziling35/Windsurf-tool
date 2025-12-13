@@ -2271,7 +2271,7 @@ async function updatePlugin() {
 }
 
 // 安装插件（一键完成：安装、激活、配置MCP、安装规则、重启Windsurf）
-async function installPlugin() {
+async function installPlugin(forceInstall = false) {
   // 查找一键安装按钮（可能是动态生成的带 pluginId 后缀，也可能是备用卡片的固定 ID）
   let btn = document.getElementById('install-plugin-btn');
   if (!btn) {
@@ -2315,17 +2315,20 @@ async function installPlugin() {
   
   const originalHtml = btn.innerHTML;
   
+  // 检测是否是重新安装（按钮文本包含"重新安装" 或 forceInstall 参数为 true）
+  const isReinstall = originalHtml.includes('重新安装') && !forceInstall;
+  
   const updateBtnStatus = (text) => {
     btn.innerHTML = `<i data-lucide="loader"></i><span>${text}</span>`;
     try { lucide.createIcons(); } catch (e) {}
   };
   
   btn.disabled = true;
-  updateBtnStatus('安装中...');
+  updateBtnStatus(isReinstall ? '重新安装中...' : '安装中...');
   
-  log('🚀 开始一键安装流程...', 'info');
+  log(`🚀 开始${isReinstall ? '重新安装' : '一键安装'}流程...`, 'info');
   log(`📁 工作目录: ${workspacePath}`, 'info');
-  showToast('正在执行一键安装，请稍候...', 'info');
+  showToast(`正在执行${isReinstall ? '重新安装' : '一键安装'}，请稍候...`, 'info');
   
   try {
     // 步骤1: 安装插件
@@ -2347,13 +2350,13 @@ async function installPlugin() {
     // 检查是否是延迟安装模式
     if (installResult.delayed) {
       log('⏳ 插件正在后台安装中...', 'info');
-      showToast(installResult.message, 'info', 8000);
+      showToast('插件正在后台安装，等待 8 秒后继续...', 'info', 8000);
       
-      // 延迟安装模式下，不执行后续步骤，直接返回
-      btn.disabled = false;
-      btn.innerHTML = originalHtml;
-      try { lucide.createIcons(); } catch (e) {}
-      return;
+      // 延迟安装模式下，等待后台脚本完成（3秒延迟 + 5秒安装时间）
+      updateBtnStatus('等待后台安装完成...');
+      await new Promise(resolve => setTimeout(resolve, 8000));
+      
+      log('✅ 后台安装完成，继续执行后续步骤', 'success');
     }
     
     log('✅ 插件安装成功', 'success');
@@ -2393,20 +2396,24 @@ async function installPlugin() {
     }
     
     // 刷新状态
+    log('🔄 刷新插件状态...', 'info');
     if (cachedPluginList) {
+      const statusPromises = [];
       cachedPluginList.forEach(plugin => {
         if (plugin.ide_type === 'windsurf') {
           const pluginId = plugin.name.replace(/-/g, '_');
-          checkPluginStatus(pluginId);
+          statusPromises.push(checkPluginStatus(pluginId));
         }
       });
+      await Promise.all(statusPromises);
     } else {
       await checkPluginStatus();
     }
+    log('✅ 状态刷新完成', 'success');
     
-    // 完成提示
-    log('🎉 一键安装完成！', 'success');
-    showToast('一键安装完成！正在启动 Windsurf...', 'success');
+    // 完成提示 - 重新安装和一键安装都执行相同的流程
+    log(`🎉 ${isReinstall ? '重新安装' : '一键安装'}完成！`, 'success');
+    showToast(`${isReinstall ? '重新安装' : '一键安装'}完成！正在启动 Windsurf...`, 'success');
     
     // 自动启动 Windsurf（安装过程中已经关闭了 Windsurf）
     updateBtnStatus('启动 Windsurf...');
