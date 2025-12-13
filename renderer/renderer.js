@@ -1654,6 +1654,33 @@ async function loadPluginList() {
       // 重新渲染图标
       try { lucide.createIcons(); } catch (e) {}
       
+      // 为工作目录输入框添加拖拽支持
+      const aiRulesPathInput = document.getElementById('ai-rules-path');
+      if (aiRulesPathInput) {
+        aiRulesPathInput.addEventListener('drop', (e) => {
+          e.preventDefault();
+          const files = e.dataTransfer.files;
+          if (files.length > 0) {
+            const filePath = files[0].path;
+            const fs = require('fs');
+            const path = require('path');
+            let targetPath = filePath;
+            try {
+              const stats = fs.statSync(filePath);
+              if (stats.isFile()) {
+                targetPath = path.dirname(filePath);
+              }
+            } catch (err) {
+              console.warn('检查路径类型失败:', err);
+            }
+            aiRulesPathInput.value = targetPath;
+            aiRulesPathInput.dispatchEvent(new Event('change'));
+            showToast('路径已设置', 'success');
+          }
+        });
+        aiRulesPathInput.addEventListener('dragover', (e) => e.preventDefault());
+      }
+      
       // 检测所有 Windsurf 插件的状态
       cachedPluginList.forEach(plugin => {
         if (plugin.ide_type === 'windsurf') {
@@ -1689,6 +1716,33 @@ function showFallbackPluginCard() {
   
   try { lucide.createIcons(); } catch (e) {}
   
+  // 为工作目录输入框添加拖拽支持
+  const aiRulesPathInput = document.getElementById('ai-rules-path');
+  if (aiRulesPathInput) {
+    aiRulesPathInput.addEventListener('drop', (e) => {
+      e.preventDefault();
+      const files = e.dataTransfer.files;
+      if (files.length > 0) {
+        const filePath = files[0].path;
+        const fs = require('fs');
+        const path = require('path');
+        let targetPath = filePath;
+        try {
+          const stats = fs.statSync(filePath);
+          if (stats.isFile()) {
+            targetPath = path.dirname(filePath);
+          }
+        } catch (err) {
+          console.warn('检查路径类型失败:', err);
+        }
+        aiRulesPathInput.value = targetPath;
+        aiRulesPathInput.dispatchEvent(new Event('change'));
+        showToast('路径已设置', 'success');
+      }
+    });
+    aiRulesPathInput.addEventListener('dragover', (e) => e.preventDefault());
+  }
+  
   // 检测插件状态
   checkPluginStatus();
 }
@@ -1699,8 +1753,8 @@ function createPluginCard(plugin) {
   card.className = 'info-card';
   card.setAttribute('data-plugin-name', plugin.name);
   
-  // 图标渐变色
-  const gradientColors = plugin.icon_gradient || ['#667eea', '#764ba2'];
+  // 图标渐变色（默认使用蓝色系，与整体UI协调）
+  const gradientColors = plugin.icon_gradient || ['#3b82f6', '#2563eb'];
   const iconName = plugin.icon || 'puzzle';
   
   // 构建功能列表 HTML
@@ -1771,33 +1825,30 @@ function createPluginCard(plugin) {
     ` : ''}
 
     <div class="info-section" style="margin-top: 20px;">
-      <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">安装状态</h4>
-      <div id="plugin-status-details-${pluginId}" style="color: #6b7280; line-height: 1.8;">
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-          <i data-lucide="loader" id="plugin-installed-icon-${pluginId}" style="width: 16px; height: 16px;"></i>
-          <span id="plugin-installed-text-${pluginId}">检测中...</span>
-        </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <i data-lucide="loader" id="mcp-configured-icon-${pluginId}" style="width: 16px; height: 16px;"></i>
-          <span id="mcp-configured-text-${pluginId}">检测中...</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- 插件版本信息 -->
-    <div class="info-section" style="margin-top: 20px;">
-      <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">版本信息</h4>
+      <h4 style="margin: 0 0 10px 0; font-size: 0.95em; color: #374151;">安装状态与版本</h4>
       <div style="color: #6b7280; line-height: 1.8;">
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-          <i data-lucide="package" style="width: 16px; height: 16px; color: #6b7280;"></i>
-          <span>本地版本：<strong id="plugin-local-version-${pluginId}">检测中...</strong></span>
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;">
+            <i data-lucide="loader" id="plugin-installed-icon-${pluginId}" style="width: 16px; height: 16px;"></i>
+            <span id="plugin-installed-text-${pluginId}">检测中...</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;">
+            <i data-lucide="package" style="width: 16px; height: 16px; color: #6b7280;"></i>
+            <span>本地版本：<strong id="plugin-local-version-${pluginId}">检测中...</strong></span>
+          </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 8px;">
-          <i data-lucide="cloud" style="width: 16px; height: 16px; color: #6b7280;"></i>
-          <span>最新版本：<strong id="plugin-latest-version-${pluginId}">${plugin.latest_version || '未知'}</strong></span>
+        <div style="display: flex; align-items: center; gap: 16px; margin-bottom: 8px; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;">
+            <i data-lucide="loader" id="mcp-configured-icon-${pluginId}" style="width: 16px; height: 16px;"></i>
+            <span id="mcp-configured-text-${pluginId}">检测中...</span>
+          </div>
+          <div style="display: flex; align-items: center; gap: 8px; flex: 1; min-width: 200px;">
+            <i data-lucide="cloud" style="width: 16px; height: 16px; color: #6b7280;"></i>
+            <span>最新版本：<strong id="plugin-latest-version-${pluginId}">${plugin.latest_version || '未知'}</strong></span>
+          </div>
         </div>
         <div id="plugin-update-info-${pluginId}" style="display: none; margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
-          <strong style="color: #92400e;" id="plugin-update-title-${pluginId}">发现新版本</strong>
+          <strong style="color: #92400e;" id="plugin-update-title-${pluginId}">检测中...</strong>
           <p style="margin: 5px 0 0 0; color: #92400e; font-size: 0.9em;" id="plugin-update-desc-${pluginId}"></p>
           <button id="update-plugin-btn-${pluginId}" class="btn btn-warning" style="margin-top: 10px; padding: 6px 12px; font-size: 0.85em;" onclick="updatePluginByName('${plugin.name}')">
             <i data-lucide="download-cloud"></i>
@@ -1810,15 +1861,17 @@ function createPluginCard(plugin) {
     ${!isKiro ? `
     <!-- 工作目录配置 -->
     <div class="info-section" style="margin-top: 20px;">
-      <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">工作目录</label>
+      <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">
+        项目工作目录 <span style="color: #ef4444; font-weight: 600;">*</span>
+      </label>
       <div class="key-input-row">
-        <input type="text" id="ai-rules-path" class="key-input auto-save" data-config-key="aiRulesPath" placeholder="留空则使用主页设置的工作目录" style="flex: 1;" />
-        <button id="select-ai-rules-path-btn" class="btn btn-secondary btn-small" title="选择工作目录">
+        <input type="text" id="ai-rules-path" class="key-input auto-save" data-config-key="aiRulesPath" placeholder="请选择项目工作目录（必填）" style="flex: 1;" required />
+        <button id="select-ai-rules-path-btn" class="btn btn-secondary btn-small" title="选择项目工作目录">
           <i data-lucide="folder"></i>
           <span>选择</span>
         </button>
       </div>
-      <small style="display: block; margin-top: 4px; color: #6b7280;">AI 规则将安装到此目录，留空则使用主页设置的工作目录</small>
+      <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，留空则使用主页设置的工作目录</small>
     </div>
     ` : ''}
 
@@ -1836,9 +1889,6 @@ function createPluginCard(plugin) {
       <button id="install-plugin-btn-${pluginId}" class="btn btn-primary" style="flex: 1; min-width: 160px;" title="安装或重新安装插件（自动完成全部配置并重启 Windsurf）" onclick="installPlugin()">
         <i data-lucide="download"></i>
         <span>一键安装</span>
-      </button>
-      <button id="refresh-plugin-status-btn-${pluginId}" class="icon-btn" title="刷新状态" onclick="checkPluginStatus('${pluginId}')">
-        <i data-lucide="refresh-cw"></i>
       </button>
       <!-- 更多操作下拉菜单 -->
       <div class="dropdown" style="position: relative;">
@@ -1865,8 +1915,15 @@ function createPluginCard(plugin) {
             <i data-lucide="trash-2"></i>
             <span>清除缓存</span>
           </button>
+          <button class="dropdown-item" id="clear-global-data-btn" title="清理 Windsurf 全局数据，恢复到新安装状态" onclick="clearWindsurfGlobalData(); closeMoreActionsMenu();">
+            <i data-lucide="trash"></i>
+            <span>清理全局数据</span>
+          </button>
         </div>
       </div>
+      <button id="refresh-plugin-status-btn-${pluginId}" class="icon-btn" title="刷新状态" onclick="checkPluginStatus('${pluginId}')">
+        <i data-lucide="refresh-cw"></i>
+      </button>
       `}
     </div>
 
@@ -2041,7 +2098,7 @@ async function checkPluginStatus(pluginId = null) {
     try { lucide.createIcons(); } catch (e) {}
     
     // 同时获取服务器端插件信息
-    await fetchPluginServerInfo();
+    await fetchPluginServerInfo(pluginId);
     
   } catch (error) {
     showToast(`检测失败: ${error.message}`, 'error');
@@ -2053,16 +2110,26 @@ async function checkPluginStatus(pluginId = null) {
 let pluginUpdateInfo = null;
 
 // 从服务器获取插件信息并检查更新
-async function fetchPluginServerInfo() {
-  const localVersionEl = document.getElementById('plugin-local-version');
-  const latestVersionEl = document.getElementById('plugin-latest-version');
-  const updateInfoEl = document.getElementById('plugin-update-info');
-  const updateTitleEl = document.getElementById('plugin-update-title');
-  const updateDescEl = document.getElementById('plugin-update-desc');
-  const updateBtn = document.getElementById('update-plugin-btn');
+async function fetchPluginServerInfo(pluginId = null) {
+  const idSuffix = pluginId ? `-${pluginId}` : '';
+  const localVersionEl = document.getElementById(`plugin-local-version${idSuffix}`);
+  const latestVersionEl = document.getElementById(`plugin-latest-version${idSuffix}`);
+  const updateInfoEl = document.getElementById(`plugin-update-info${idSuffix}`);
+  const updateTitleEl = document.getElementById(`plugin-update-title${idSuffix}`);
+  const updateDescEl = document.getElementById(`plugin-update-desc${idSuffix}`);
+  const updateBtn = document.getElementById(`update-plugin-btn${idSuffix}`);
   
-  // 获取本地插件版本（从内置的 VSIX 文件名推断，或从已安装插件读取）
-  const localVersion = '1.0.0'; // 当前内置版本
+  // 获取本地插件版本（从已安装插件读取）
+  let localVersion = '1.0.0'; // 默认版本
+  try {
+    const statusResult = await window.electronAPI.checkPluginStatus();
+    if (statusResult.success && statusResult.data && statusResult.data.pluginVersion) {
+      localVersion = statusResult.data.pluginVersion;
+    }
+  } catch (err) {
+    console.warn('获取本地插件版本失败:', err);
+  }
+  
   if (localVersionEl) {
     localVersionEl.textContent = localVersion;
   }
@@ -2097,10 +2164,10 @@ async function fetchPluginServerInfo() {
       if (has_update && updateInfoEl) {
         updateInfoEl.style.display = 'block';
         if (updateTitleEl) {
-          updateTitleEl.textContent = update_title || '发现新版本';
+          updateTitleEl.textContent = update_title || `发现新版本 ${latest_version}`;
         }
         if (updateDescEl) {
-          updateDescEl.textContent = update_description || `新版本 ${latest_version} 可用，建议更新。`;
+          updateDescEl.textContent = update_description || `检测到新版本 ${latest_version}`;
         }
         if (is_force_update) {
           updateInfoEl.style.background = '#fee2e2';
@@ -2220,6 +2287,32 @@ async function installPlugin() {
     return;
   }
   
+  // 验证工作目录是否已设置（必填）
+  const aiRulesPathInput = document.getElementById('ai-rules-path');
+  const aiRulesPath = aiRulesPathInput ? aiRulesPathInput.value.trim() : '';
+  
+  // 如果插件管理页面的工作目录为空，尝试使用主页的工作目录
+  let workspacePath = aiRulesPath;
+  if (!workspacePath) {
+    const mainWorkspaceInput = document.getElementById('workspace-path-input');
+    workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
+  }
+  
+  if (!workspacePath) {
+    log('❌ 未设置工作目录，无法安装插件', 'error');
+    showToast('请先设置工作目录！这是安装插件的必要条件。', 'error', 5000);
+    
+    // 高亮显示工作目录输入框
+    if (aiRulesPathInput) {
+      aiRulesPathInput.style.borderColor = '#ef4444';
+      aiRulesPathInput.focus();
+      setTimeout(() => {
+        aiRulesPathInput.style.borderColor = '';
+      }, 3000);
+    }
+    return;
+  }
+  
   const originalHtml = btn.innerHTML;
   
   const updateBtnStatus = (text) => {
@@ -2231,6 +2324,7 @@ async function installPlugin() {
   updateBtnStatus('安装中...');
   
   log('🚀 开始一键安装流程...', 'info');
+  log(`📁 工作目录: ${workspacePath}`, 'info');
   showToast('正在执行一键安装，请稍候...', 'info');
   
   try {
@@ -2249,6 +2343,19 @@ async function installPlugin() {
       showToast(errorMsg, 'error', 5000);
       throw new Error(errorMsg);
     }
+    
+    // 检查是否是延迟安装模式
+    if (installResult.delayed) {
+      log('⏳ 插件正在后台安装中...', 'info');
+      showToast(installResult.message, 'info', 8000);
+      
+      // 延迟安装模式下，不执行后续步骤，直接返回
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      try { lucide.createIcons(); } catch (e) {}
+      return;
+    }
+    
     log('✅ 插件安装成功', 'success');
     
     // 步骤2: 激活插件（同步激活码）
@@ -2465,6 +2572,79 @@ async function clearPluginCache() {
   }
 }
 
+// 清理 Windsurf 全局数据（恢复到新安装状态）
+async function clearWindsurfGlobalData() {
+  const confirmed = await showModal(
+    '⚠️ 清理全局数据',
+    '此操作将清理 Windsurf 的所有数据，包括：\n\n' +
+    '• 所有缓存和临时文件\n' +
+    '• 所有已安装的扩展\n' +
+    '• 工作区历史记录\n' +
+    '• 用户设置和状态\n' +
+    '• Session 和 Cookie 数据\n' +
+    '• 数据库文件\n\n' +
+    '⚠️ 警告：此操作不可逆！\n' +
+    'Windsurf 将恢复到像新安装一样的状态。\n\n' +
+    '是否继续？'
+  );
+  
+  if (!confirmed) return;
+  
+  const btn = document.getElementById('clear-global-data-btn');
+  const originalHtml = btn ? btn.innerHTML : '';
+  
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader"></i><span>清理中...</span>';
+    try { lucide.createIcons(); } catch (e) {}
+  }
+  
+  log('🗑️ 开始清理 Windsurf 全局数据...', 'info');
+  showToast('正在清理全局数据，请稍候...', 'info');
+  
+  try {
+    const result = await window.electronAPI.clearWindsurfGlobalData();
+    
+    if (result.success) {
+      showToast(result.message, 'success');
+      log('✅ 全局数据清理成功', 'success');
+      
+      if (result.data && result.data.results) {
+        log('清理详情:', 'info');
+        result.data.results.forEach(item => {
+          if (item.cleared) {
+            log(`  ✓ ${item.path} (${item.size})`, 'success');
+          } else if (item.error) {
+            log(`  ✗ ${item.path}: ${item.error}`, 'warning');
+          }
+        });
+      }
+      
+      setTimeout(async () => {
+        await showModal(
+          '✅ 清理完成',
+          '全局数据已清理完成！\n\n' +
+          'Windsurf 已恢复到新安装状态。\n\n' +
+          '下次启动 Windsurf 时，它将重新初始化所有设置。\n\n' +
+          '如需重新使用插件，请重新安装并配置。'
+        );
+      }, 500);
+    } else {
+      showToast(`清理失败: ${result.message}`, 'error');
+      log(`❌ 清理失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`清理失败: ${error.message}`, 'error');
+    log(`❌ 清理失败: ${error.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  }
+}
+
 // 配置 MCP
 async function configureMCP() {
   const btn = document.getElementById('configure-mcp-btn');
@@ -2595,6 +2775,32 @@ async function resetMCPConfig() {
 
 // 安装 AI 规则（强制 AI 使用 ask_continue 工具）
 async function installAIRules() {
+  // 验证工作目录是否已设置（必填）
+  const aiRulesPathInput = document.getElementById('ai-rules-path');
+  const aiRulesPath = aiRulesPathInput ? aiRulesPathInput.value.trim() : '';
+  
+  // 如果插件管理页面的工作目录为空，尝试使用主页的工作目录
+  let workspacePath = aiRulesPath;
+  if (!workspacePath) {
+    const mainWorkspaceInput = document.getElementById('workspace-path-input');
+    workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
+  }
+  
+  if (!workspacePath) {
+    log('❌ 未设置工作目录，无法安装 AI 规则', 'error');
+    showToast('请先设置工作目录！AI 规则需要安装到工作目录中。', 'error', 5000);
+    
+    // 高亮显示工作目录输入框
+    if (aiRulesPathInput) {
+      aiRulesPathInput.style.borderColor = '#ef4444';
+      aiRulesPathInput.focus();
+      setTimeout(() => {
+        aiRulesPathInput.style.borderColor = '';
+      }, 3000);
+    }
+    return;
+  }
+  
   const btn = document.getElementById('install-rules-btn');
   const originalHtml = btn.innerHTML;
   
@@ -2603,6 +2809,7 @@ async function installAIRules() {
   try { lucide.createIcons(); } catch (e) {}
   
   log('开始安装 AI 规则...', 'info');
+  log(`📁 工作目录: ${workspacePath}`, 'info');
   showToast('正在安装 AI 规则...', 'info');
   
   try {
@@ -2827,6 +3034,8 @@ async function clearPluginActivationCache() {
 
 // ===== 公告功能 =====
 
+let latestAnnouncementData = null;
+
 // 获取并显示公告
 async function loadAnnouncement() {
   try {
@@ -2834,10 +3043,12 @@ async function loadAnnouncement() {
     
     if (result && result.success && result.data) {
       const announcementData = result.data;
+      latestAnnouncementData = announcementData;
       
       // 检查是否有公告内容
       if (announcementData.content && announcementData.content.trim()) {
         displayAnnouncement(announcementData);
+        updateAnnouncementNavBadge(announcementData);
       } else {
         // 没有公告内容，隐藏公告区域
         const container = document.getElementById('announcement-container');
@@ -2862,18 +3073,105 @@ async function loadAnnouncement() {
   }
 }
 
+// 更新菜单栏公告时间徽章
+function updateAnnouncementNavBadge(data) {
+  const navTimeBadge = document.getElementById('nav-announcement-time');
+  if (!navTimeBadge) return;
+  
+  if (data.updated_at || data.created_at) {
+    const timestamp = data.updated_at || data.created_at;
+    const date = new Date(timestamp);
+    const now = new Date();
+    const diffMs = now - date;
+    const diffMins = Math.floor(diffMs / 60000);
+    const diffHours = Math.floor(diffMs / 3600000);
+    const diffDays = Math.floor(diffMs / 86400000);
+    
+    let timeText = '';
+    if (diffMins < 1) {
+      timeText = '刚刚';
+    } else if (diffMins < 60) {
+      timeText = `${diffMins}分钟前`;
+    } else if (diffHours < 24) {
+      timeText = `${diffHours}小时前`;
+    } else if (diffDays < 7) {
+      timeText = `${diffDays}天前`;
+    } else {
+      timeText = date.toLocaleDateString('zh-CN', { month: 'numeric', day: 'numeric' });
+    }
+    
+    navTimeBadge.textContent = timeText;
+    navTimeBadge.style.display = 'inline-block';
+  }
+}
+
+// 显示公告页面内容
+function displayAnnouncementPage() {
+  const contentDisplay = document.getElementById('announcement-content-display');
+  const updateTimeDisplay = document.getElementById('announcement-update-time');
+  
+  if (!contentDisplay) return;
+  
+  if (latestAnnouncementData && latestAnnouncementData.content) {
+    contentDisplay.textContent = latestAnnouncementData.content;
+    
+    // 显示更新时间
+    if (updateTimeDisplay && (latestAnnouncementData.updated_at || latestAnnouncementData.created_at)) {
+      const timestamp = latestAnnouncementData.updated_at || latestAnnouncementData.created_at;
+      const date = new Date(timestamp);
+      updateTimeDisplay.textContent = `更新时间: ${date.toLocaleString('zh-CN')}`;
+    }
+  } else {
+    contentDisplay.innerHTML = `
+      <div style="text-align: center; padding: 60px 20px; color: #9ca3af;">
+        <i data-lucide="inbox" style="width: 48px; height: 48px; margin-bottom: 10px;"></i>
+        <p>暂无公告</p>
+      </div>
+    `;
+    if (updateTimeDisplay) {
+      updateTimeDisplay.textContent = '';
+    }
+  }
+  
+  try { lucide.createIcons(); } catch (e) {}
+}
+
+// 刷新公告
+async function refreshAnnouncement() {
+  const btn = document.getElementById('refresh-announcement-btn');
+  if (btn) {
+    btn.disabled = true;
+    const icon = btn.querySelector('i');
+    if (icon) icon.style.animation = 'spin 1s linear infinite';
+  }
+  
+  showToast('正在刷新公告...', 'info');
+  
+  await loadAnnouncement();
+  displayAnnouncementPage();
+  
+  showToast('公告已刷新', 'success');
+  
+  if (btn) {
+    btn.disabled = false;
+    const icon = btn.querySelector('i');
+    if (icon) icon.style.animation = '';
+  }
+}
+
 // 公告轮播状态
 let announcementPages = [];
 let currentAnnouncementIndex = 0;
 let announcementInterval = null;
 
-// 显示公告内容（显示在侧边栏，支持轮播）
+// 显示公告内容（显示在底部左侧公告窗口，支持轮播）
 function displayAnnouncement(data) {
-  // 侧边栏公告元素
-  const sidebarContainer = document.getElementById('sidebar-announcement');
+  // 底部左侧公告窗口元素
+  const sidebarWindow = document.getElementById('sidebar-announcement-window');
   const sidebarContent = document.getElementById('sidebar-announcement-content');
+  const sidebarTime = document.getElementById('sidebar-announcement-time');
   
-  if (sidebarContainer && sidebarContent) {
+  if (sidebarWindow && sidebarContent) {
     // 将公告按段落分割（支持多种分隔符）
     const content = data.content || '';
     // 按双换行、分隔线、数字序号等分割
@@ -2893,11 +3191,18 @@ function displayAnnouncement(data) {
       startAnnouncementCarousel();
     }
     
-    // 显示侧边栏公告
-    sidebarContainer.style.display = 'block';
+    // 显示公告时间（使用相对时间格式，如"8天前"）
+    if (sidebarTime && data.updated_at) {
+      sidebarTime.textContent = formatRelativeTime(data.updated_at);
+    } else if (sidebarTime) {
+      sidebarTime.textContent = '未知';
+    }
     
-    // 点击侧边栏公告时显示完整内容
-    sidebarContainer.onclick = () => {
+    // 显示底部左侧公告窗口
+    sidebarWindow.style.display = 'block';
+    
+    // 点击公告窗口时显示完整内容
+    sidebarWindow.onclick = () => {
       showModal('系统公告', data.content);
     };
     
@@ -2981,10 +3286,75 @@ function initNavigation() {
         loadVersionNotes();
       }
       
+      // 如果切换到公告页面，显示公告内容
+      if (targetPage === 'announcement') {
+        displayAnnouncementPage();
+      }
+      
       // 重新渲染图标
       lucide.createIcons();
     });
   });
+}
+
+// ===== 时间显示和版本检查 =====
+
+// 格式化相对时间（如"1天前"、"2小时前"）
+function formatRelativeTime(isoString) {
+  if (!isoString) return '未知';
+  
+  const now = new Date();
+  const past = new Date(isoString);
+  const diffMs = now - past;
+  
+  if (diffMs < 0) return '刚刚';
+  
+  const seconds = Math.floor(diffMs / 1000);
+  const minutes = Math.floor(seconds / 60);
+  const hours = Math.floor(minutes / 60);
+  const days = Math.floor(hours / 24);
+  const months = Math.floor(days / 30);
+  const years = Math.floor(days / 365);
+  
+  if (years > 0) return `${years}年前`;
+  if (months > 0) return `${months}月前`;
+  if (days > 0) return `${days}天前`;
+  if (hours > 0) return `${hours}小时前`;
+  if (minutes > 0) return `${minutes}分钟前`;
+  return '刚刚';
+}
+
+// 检查并显示最新版本更新时间（在版本说明菜单旁边显示标签）
+async function checkAndDisplayLatestVersion() {
+  const updateTimeBadge = document.getElementById('nav-version-update-time');
+  
+  if (!updateTimeBadge) return;
+  
+  try {
+    const result = await window.electronAPI.checkVersion(CLIENT_VERSION);
+    
+    if (result.success && result.data) {
+      const { updated_at } = result.data;
+      
+      // 显示更新时间标签（橙黄色样式）
+      if (updated_at) {
+        updateTimeBadge.textContent = formatRelativeTime(updated_at);
+        updateTimeBadge.style.background = '#fbbf24';
+        updateTimeBadge.style.color = '#78350f';
+        updateTimeBadge.style.display = 'inline-block';
+      } else {
+        // 没有更新时间时隐藏标签
+        updateTimeBadge.style.display = 'none';
+      }
+    } else {
+      // 检查失败时也隐藏标签，避免显示错误信息
+      updateTimeBadge.style.display = 'none';
+    }
+  } catch (error) {
+    console.error('检查版本失败:', error);
+    // 出错时隐藏标签
+    updateTimeBadge.style.display = 'none';
+  }
 }
 
 // ===== 版本控制 =====
@@ -3122,7 +3492,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // 监听切换账号进度消息
   window.electronAPI.onSwitchProgress((data) => {
-    const { step, message } = data;
+    const { step, message, percent } = data;
     
     let logType = 'info';
     let toastType = 'info';
@@ -3144,8 +3514,11 @@ document.addEventListener('DOMContentLoaded', () => {
       toastType = 'success';
     }
     
-    log(message, logType);
-    showToast(message, toastType, 2500);
+    // 如果有百分比信息，添加到消息中
+    const displayMessage = percent !== undefined ? `${message} (${percent}%)` : message;
+    
+    log(displayMessage, logType);
+    showToast(displayMessage, toastType, 2500);
     
     if (step === 'launch-done' || step === 'complete' || step === 'error') {
       const ocBtn = document.getElementById('one-click-switch-btn');
@@ -3191,6 +3564,16 @@ document.addEventListener('DOMContentLoaded', () => {
   setTimeout(() => {
     loadAnnouncement();
   }, 300);
+  
+  // 检查并显示最新版本更新时间
+  setTimeout(() => {
+    checkAndDisplayLatestVersion();
+  }, 500);
+  
+  // 定期检查最新版本更新时间（每30分钟）
+  setInterval(() => {
+    checkAndDisplayLatestVersion();
+  }, 30 * 60 * 1000);
   
   // 页面卸载时清理轮播定时器
   window.addEventListener('beforeunload', () => {
@@ -3316,6 +3699,9 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // ===== 版本说明页面事件绑定 =====
   document.getElementById('refresh-version-btn')?.addEventListener('click', loadVersionNotes);
+  
+  // ===== 公告页面事件绑定 =====
+  document.getElementById('refresh-announcement-btn')?.addEventListener('click', refreshAnnouncement);
   
   // ===== 更多操作下拉菜单 =====
   bindMoreActionsMenu();

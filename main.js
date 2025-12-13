@@ -1391,11 +1391,25 @@ ipcMain.handle('check-plugin-status', async () => {
 // 安装插件（自动关闭 Windsurf 并清除旧缓存）
 ipcMain.handle('install-plugin', async (event) => {
   try {
+    // 总共8个主要步骤
+    const TOTAL_STEPS = 8;
+    let currentStep = 0;
+    
+    const sendProgress = (stepName, message) => {
+      currentStep++;
+      const percent = Math.round((currentStep / TOTAL_STEPS) * 100);
+      event.sender.send('switch-progress', { 
+        step: 'info', 
+        message: `[${currentStep}/${TOTAL_STEPS}] ${message}`,
+        percent: percent
+      });
+    };
+    
     // 检测 Windsurf 是否正在运行
     const isRunning = await processMonitor.isWindsurfRunning();
     if (isRunning) {
       console.log('[安装插件] Windsurf 正在运行，需要先关闭...');
-      event.sender.send('switch-progress', { step: 'info', message: '⏳ 正在关闭 Windsurf...' });
+      sendProgress('close', '⏳ 正在关闭 Windsurf...');
       
       const killResult = await processMonitor.killWindsurf();
       if (killResult.killed) {
@@ -1411,7 +1425,7 @@ ipcMain.handle('install-plugin', async (event) => {
         }
         if (closed) {
           console.log('[安装插件] Windsurf 已关闭');
-          event.sender.send('switch-progress', { step: 'info', message: '✅ Windsurf 已关闭' });
+          sendProgress('closed', '✅ Windsurf 已关闭');
           // 额外等待 1 秒确保文件句柄释放
           await new Promise(resolve => setTimeout(resolve, 1000));
         } else {
@@ -1422,21 +1436,85 @@ ipcMain.handle('install-plugin', async (event) => {
       }
     }
     
-    // 先清除插件相关缓存
-    console.log('[安装插件] 清除旧缓存...');
-    event.sender.send('switch-progress', { step: 'info', message: '⏳ 清除旧缓存...' });
+    // 先使用 CLI 卸载插件（更彻底）
+    console.log('[安装插件] ========== 开始卸载旧插件 ==========');
+    sendProgress('uninstall', '⏳ 卸载旧插件...');
+    
+    // 获取 Windsurf CLI 路径
+    let windsurfExe = configManager.getWindsurfExePath();
+    if (!windsurfExe) {
+      windsurfExe = detectWindsurfExecutable();
+      if (windsurfExe) {
+        configManager.setWindsurfExePath(windsurfExe);
+      }
+    }
+    
+    if (windsurfExe && fs.existsSync(windsurfExe)) {
+      const windsurfDir = path.dirname(windsurfExe);
+      const binDir = path.join(windsurfDir, 'bin');
+      const cliPath = path.join(binDir, 'windsurf.cmd');
+      
+      if (fs.existsSync(cliPath)) {
+        try {
+          const { execFile } = require('child_process');
+          const { promisify } = require('util');
+          const execFileAsync = promisify(execFile);
+          
+          // 尝试卸载所有可能的插件 ID
+          const pluginIds = [
+            'undefined_publisher.windsurf-continue-pro',
+            'papercrane.windsurf-continue-pro',
+            'windsurf-continue-pro'
+          ];
+          
+          for (let i = 0; i < pluginIds.length; i++) {
+            const pluginId = pluginIds[i];
+            try {
+              console.log(`[安装插件] 尝试卸载: ${pluginId}`);
+              event.sender.send('switch-progress', { 
+                step: 'info', 
+                message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 卸载旧插件 (${i + 1}/${pluginIds.length})...` 
+              });
+              await execFileAsync(cliPath, ['--uninstall-extension', pluginId], {
+                timeout: 30000,
+                windowsHide: true
+              });
+              console.log(`[安装插件] ✅ 已卸载: ${pluginId}`);
+              await sleep(500);
+            } catch (err) {
+              console.log(`[安装插件] 卸载 ${pluginId} 失败或不存在:`, err.message);
+            }
+          }
+        } catch (err) {
+          console.warn('[安装插件] CLI 卸载失败:', err.message);
+        }
+      }
+    }
+    
+    // 等待 CLI 卸载完成
+    await sleep(2000);
+    
+    // 手动清除插件相关缓存（确保彻底清理）
+    console.log('[安装插件] 手动清除插件文件...');
+    sendProgress('cleanup', '⏳ 清除插件文件...');
+    
     const extensionsPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
     if (fs.existsSync(extensionsPath)) {
       const extensions = fs.readdirSync(extensionsPath);
-      for (const ext of extensions) {
-        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
-          const extPath = path.join(extensionsPath, ext);
-          const delResult = await removePathWithRetries(extPath, { isDir: true });
-          if (delResult.removed) {
-            console.log('[安装插件] 已删除旧版本:', ext);
-          } else {
-            console.warn('[安装插件] 删除旧版本失败:', ext, delResult.error?.message);
-          }
+      const targetExts = extensions.filter(ext => ext.includes('windsurf-continue-pro') || ext.includes('ask-continue'));
+      for (let i = 0; i < targetExts.length; i++) {
+        const ext = targetExts[i];
+        const extPath = path.join(extensionsPath, ext);
+        console.log(`[安装插件] 删除插件目录: ${ext}`);
+        event.sender.send('switch-progress', { 
+          step: 'info', 
+          message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 清除插件文件 (${i + 1}/${targetExts.length})...` 
+        });
+        const delResult = await removePathWithRetries(extPath, { isDir: true, maxRetries: 10 });
+        if (delResult.removed) {
+          console.log('[安装插件] ✅ 已删除旧版本:', ext);
+        } else {
+          console.warn('[安装插件] ⚠️ 删除旧版本失败:', ext, delResult.error?.message);
         }
       }
     }
@@ -1448,11 +1526,12 @@ ipcMain.handle('install-plugin', async (event) => {
       for (const file of files) {
         if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
           const filePath = path.join(cachedExtPath, file);
-          const delResult = await removePathWithRetries(filePath, { isDir: false });
+          console.log(`[安装插件] 清除缓存文件: ${file}`);
+          const delResult = await removePathWithRetries(filePath, { isDir: false, maxRetries: 10 });
           if (delResult.removed) {
-            console.log('[安装插件] 已清除缓存:', file);
+            console.log('[安装插件] ✅ 已清除缓存:', file);
           } else {
-            console.warn('[安装插件] 清除缓存失败:', file, delResult.error?.message);
+            console.warn('[安装插件] ⚠️ 清除缓存失败:', file, delResult.error?.message);
           }
         }
       }
@@ -1465,15 +1544,49 @@ ipcMain.handle('install-plugin', async (event) => {
       for (const ext of extensions) {
         if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
           const extPath = path.join(globalStoragePath, ext);
-          const delResult = await removePathWithRetries(extPath, { isDir: true });
+          console.log(`[安装插件] 清除 globalState: ${ext}`);
+          const delResult = await removePathWithRetries(extPath, { isDir: true, maxRetries: 10 });
           if (delResult.removed) {
-            console.log('[安装插件] 已清除 globalState:', ext);
+            console.log('[安装插件] ✅ 已清除 globalState:', ext);
           } else {
-            console.warn('[安装插件] 清除 globalState 失败:', ext, delResult.error?.message);
+            console.warn('[安装插件] ⚠️ 清除 globalState 失败:', ext, delResult.error?.message);
           }
         }
       }
     }
+    
+    // 清除 workspaceStorage（可能包含插件状态）
+    const workspaceStoragePath = path.join(windsurfUserDataPath, 'User', 'workspaceStorage');
+    if (fs.existsSync(workspaceStoragePath)) {
+      try {
+        const workspaces = fs.readdirSync(workspaceStoragePath);
+        for (const workspace of workspaces) {
+          const wsPath = path.join(workspaceStoragePath, workspace);
+          if (fs.statSync(wsPath).isDirectory()) {
+            const wsStateFile = path.join(wsPath, 'state.vscdb');
+            if (fs.existsSync(wsStateFile)) {
+              try {
+                const content = fs.readFileSync(wsStateFile, 'utf-8');
+                if (content.includes('windsurf-continue-pro') || content.includes('ask-continue')) {
+                  console.log(`[安装插件] 清除工作区状态: ${workspace}`);
+                  const delResult = await removePathWithRetries(wsPath, { isDir: true, maxRetries: 5 });
+                  if (delResult.removed) {
+                    console.log('[安装插件] ✅ 已清除工作区状态');
+                  }
+                }
+              } catch (err) {
+                // 忽略读取错误
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[安装插件] 清除工作区状态失败:', err.message);
+      }
+    }
+    
+    console.log('[安装插件] ✅ 旧插件清理完成');
+    sendProgress('cleaned', '✅ 旧插件已清理');
     
     // 先从服务器获取最新插件信息
     let latestVersion = '1.0.0';
@@ -1481,7 +1594,7 @@ ipcMain.handle('install-plugin', async (event) => {
     
     console.log('[安装插件] ========== 开始获取插件信息 ==========');
     try {
-      event.sender.send('switch-progress', { step: 'info', message: '⏳ 检查插件版本...' });
+      sendProgress('version', '⏳ 检查插件版本...');
       const pluginInfo = await KeyManager.checkPluginUpdate('windsurf-continue-pro', '0.0.0');
       if (pluginInfo.success && pluginInfo.data) {
         latestVersion = pluginInfo.data.latest_version || '1.0.0';
@@ -1498,68 +1611,110 @@ ipcMain.handle('install-plugin', async (event) => {
     const pluginFileName = `windsurf-continue-pro-${latestVersion}.vsix`;
     const downloadedPath = path.join(app.getPath('userData'), 'downloads', pluginFileName);
     
-    console.log('[安装插件] ========== 查找本地 VSIX 文件 ==========');
+    console.log('[安装插件] ========== 准备下载最新插件 ==========');
     console.log('[安装插件] 目标文件名:', pluginFileName);
     
-    // 优先使用已下载的文件
+    // 强制从服务器下载最新版本（删除旧的下载文件）
     let vsixPath = null;
+    
+    // 1. 删除旧的下载文件（确保获取最新版本）
     if (fs.existsSync(downloadedPath)) {
-      vsixPath = downloadedPath;
-      console.log('[安装插件] ✅ 找到已下载的文件:', vsixPath);
-    } else {
-      // 尝试多个可能的本地路径
+      console.log('[安装插件] 删除旧的下载文件:', downloadedPath);
+      try {
+        fs.unlinkSync(downloadedPath);
+        console.log('[安装插件] ✅ 旧文件已删除');
+      } catch (err) {
+        console.warn('[安装插件] ⚠️ 删除旧文件失败:', err.message);
+      }
+    }
+    
+    // 2. 清理 downloads 目录中的所有旧版本插件文件
+    const downloadsDir = path.join(app.getPath('userData'), 'downloads');
+    if (fs.existsSync(downloadsDir)) {
+      const files = fs.readdirSync(downloadsDir);
+      for (const file of files) {
+        if (file.includes('windsurf-continue-pro') && file.endsWith('.vsix')) {
+          const oldFile = path.join(downloadsDir, file);
+          try {
+            fs.unlinkSync(oldFile);
+            console.log('[安装插件] 清理旧版本文件:', file);
+          } catch (err) {
+            console.warn('[安装插件] 清理失败:', file, err.message);
+          }
+        }
+      }
+    }
+    
+    // 3. 从服务器下载最新版本
+    if (!downloadUrl) {
+      console.error('[安装插件] ❌ 无法获取下载地址');
+      
+      // 降级方案：尝试使用本地 resources 目录的文件
       const possiblePaths = [
         path.join(__dirname, 'resources', pluginFileName),
         path.join(app.getAppPath(), 'resources', pluginFileName),
         path.join(process.cwd(), 'resources', pluginFileName)
       ];
       
-      console.log('[安装插件] 检查本地路径:');
+      console.log('[安装插件] 尝试使用本地备用文件:');
       for (const testPath of possiblePaths) {
         console.log(`  - ${testPath}: ${fs.existsSync(testPath) ? '✅ 存在' : '❌ 不存在'}`);
         if (!vsixPath && fs.existsSync(testPath)) {
           vsixPath = testPath;
+          console.log('[安装插件] ⚠️ 使用本地备用文件（可能不是最新版本）');
         }
       }
-    }
-    
-    // 如果本地不存在，尝试从服务器下载
-    if (!vsixPath) {
-      console.log('[安装插件] ⚠️ 本地未找到 VSIX 文件');
-      if (!downloadUrl) {
-        console.error('[安装插件] ❌ 无法获取下载地址');
+      
+      if (!vsixPath) {
         return { 
           success: false, 
-          message: `插件文件不存在且无法获取下载地址\n\n目标文件: ${pluginFileName}\n\n可能原因：\n1. 服务器连接失败\n2. 本地 resources 目录缺少插件文件\n\n建议：\n1. 检查网络连接\n2. 确保 resources 目录下有 ${pluginFileName}` 
+          message: `无法获取插件文件\n\n目标文件: ${pluginFileName}\n\n可能原因：\n1. 服务器连接失败\n2. 本地 resources 目录缺少插件文件\n\n建议：\n1. 检查网络连接\n2. 确保 resources 目录下有 ${pluginFileName}` 
         };
       }
+    } else {
+      sendProgress('download', '⏳ 正在从服务器下载最新插件...');
+      console.log('[安装插件] 从服务器下载最新版本...');
+      console.log('[安装插件] 下载地址:', downloadUrl);
       
-      event.sender.send('switch-progress', { step: 'info', message: '⏳ 正在从服务器下载插件...' });
-      console.log('[安装插件] 本地插件不存在，开始从服务器下载...');
+      // 确保 downloads 目录存在
+      if (!fs.existsSync(downloadsDir)) {
+        fs.mkdirSync(downloadsDir, { recursive: true });
+      }
       
       // 下载到 userData/downloads 目录
       const downloadResult = await KeyManager.downloadPlugin(downloadUrl, downloadedPath, (percent) => {
-        event.sender.send('switch-progress', { step: 'info', message: `⏳ 下载插件中... ${percent}%` });
+        event.sender.send('switch-progress', { 
+          step: 'info', 
+          message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 下载插件中... ${percent}%`,
+          percent: Math.round((currentStep - 1) / TOTAL_STEPS * 100 + percent / TOTAL_STEPS)
+        });
       });
       
       if (!downloadResult.success) {
+        console.error('[安装插件] ❌ 下载失败:', downloadResult.message);
         return { 
           success: false, 
-          message: `下载插件失败: ${downloadResult.message}` 
+          message: `下载插件失败: ${downloadResult.message}\n\n请检查网络连接后重试` 
         };
       }
       
       vsixPath = downloadedPath;
-      console.log('[安装插件] 插件下载成功:', vsixPath);
-      event.sender.send('switch-progress', { step: 'info', message: '✅ 插件下载完成' });
+      console.log('[安装插件] ✅ 最新插件下载成功:', vsixPath);
+      event.sender.send('switch-progress', { 
+        step: 'info', 
+        message: `[${currentStep}/${TOTAL_STEPS}] ✅ 最新插件下载完成`,
+        percent: Math.round((currentStep / TOTAL_STEPS) * 100)
+      });
     }
     
-    // 检测 Windsurf 可执行文件
-    let windsurfExe = configManager.getWindsurfExePath();
+    // 检测 Windsurf 可执行文件（复用之前获取的 windsurfExe）
     if (!windsurfExe) {
-      windsurfExe = detectWindsurfExecutable();
-      if (windsurfExe) {
-        configManager.setWindsurfExePath(windsurfExe);
+      windsurfExe = configManager.getWindsurfExePath();
+      if (!windsurfExe) {
+        windsurfExe = detectWindsurfExecutable();
+        if (windsurfExe) {
+          configManager.setWindsurfExePath(windsurfExe);
+        }
       }
     }
     
@@ -1579,8 +1734,24 @@ ipcMain.handle('install-plugin', async (event) => {
     // 记录 Windsurf 之前是否在运行
     const wasWindsurfRunning = isRunning;
     
+    // 如果刚刚关闭了 Windsurf，需要额外等待以确保扩展系统完全释放
+    if (wasWindsurfRunning) {
+      console.log('[安装插件] 等待扩展系统完全释放 (5秒)...');
+      event.sender.send('switch-progress', { 
+        step: 'info', 
+        message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 等待系统释放资源...` 
+      });
+      for (let i = 0; i < 5; i++) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        event.sender.send('switch-progress', { 
+          step: 'info', 
+          message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 等待系统释放资源... (${i + 1}/5秒)` 
+        });
+      }
+    }
+    
     // 使用 Windsurf CLI 安装插件（确保正确注册）
-    event.sender.send('switch-progress', { step: 'info', message: '⏳ 正在安装插件...' });
+    sendProgress('install', '⏳ 正在安装插件...');
     
     try {
       // 使用 CLI 安装插件
@@ -1611,9 +1782,76 @@ ipcMain.handle('install-plugin', async (event) => {
         await new Promise(resolve => setTimeout(resolve, 2000));
         
         console.log('[安装插件] CLI 安装完成，开始验证...');
-        event.sender.send('switch-progress', { step: 'info', message: '✅ 插件已安装' });
+        event.sender.send('switch-progress', { 
+          step: 'info', 
+          message: `[${currentStep}/${TOTAL_STEPS}] ✅ 插件已安装`,
+          percent: Math.round((currentStep / TOTAL_STEPS) * 100)
+        });
       } catch (cliError) {
         console.error('[安装插件] CLI 安装失败:', cliError);
+        
+        // 如果错误信息包含 "Please restart Windsurf"，说明需要使用延迟脚本安装
+        if (cliError.message && cliError.message.includes('Please restart')) {
+          console.log('[安装插件] 检测到需要重启，使用延迟脚本安装...');
+          event.sender.send('switch-progress', { 
+            step: 'info', 
+            message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 创建延迟安装脚本...` 
+          });
+          
+          // 创建 PowerShell 延迟安装脚本
+          const os = require('os');
+          const tempDir = os.tmpdir();
+          const scriptPath = path.join(tempDir, 'windsurf-delayed-install.ps1');
+          
+          const scriptContent = `# Windsurf Continue Pro 延迟安装脚本
+Write-Host "等待 3 秒后开始安装..." -ForegroundColor Cyan
+Start-Sleep -Seconds 3
+
+Write-Host "正在安装 Windsurf Continue Pro..." -ForegroundColor Yellow
+try {
+    & "${cliPath}" --install-extension "${vsixPath}" --force
+    Write-Host "✓ 插件安装成功！" -ForegroundColor Green
+    Write-Host ""
+    Write-Host "请重新打开 Windsurf 使插件生效。" -ForegroundColor Cyan
+} catch {
+    Write-Host "❌ 安装失败: $_" -ForegroundColor Red
+}
+
+Start-Sleep -Seconds 5
+Remove-Item -Path "$PSCommandPath" -Force -ErrorAction SilentlyContinue
+`;
+          
+          fs.writeFileSync(scriptPath, scriptContent, 'utf-8');
+          console.log('[安装插件] 延迟脚本已创建:', scriptPath);
+          
+          // 启动延迟脚本（后台运行）
+          const { spawn } = require('child_process');
+          spawn('powershell.exe', [
+            '-NoProfile',
+            '-ExecutionPolicy', 'Bypass',
+            '-WindowStyle', 'Normal',
+            '-File', scriptPath
+          ], {
+            detached: true,
+            stdio: 'ignore'
+          }).unref();
+          
+          console.log('[安装插件] 延迟脚本已启动');
+          event.sender.send('switch-progress', { 
+            step: 'info', 
+            message: `[${currentStep}/${TOTAL_STEPS}] ✅ 延迟安装脚本已启动`,
+            percent: 100
+          });
+          
+          // 返回特殊状态，告知用户稍等片刻
+          return {
+            success: true,
+            delayed: true,
+            message: '插件正在后台安装中...\n\n由于系统限制，安装脚本将在 3 秒后自动执行。\n请稍等片刻，然后重启 Windsurf 即可使用插件。',
+            wasRunning: wasWindsurfRunning
+          };
+        }
+        
         throw new Error(`CLI 安装失败: ${cliError.message}`);
       }
       
@@ -1679,7 +1917,7 @@ ipcMain.handle('install-plugin', async (event) => {
       }
       
       console.log('[安装插件] 插件文件验证通过');
-      event.sender.send('switch-progress', { step: 'info', message: '✅ 插件文件验证通过' });
+      sendProgress('verify', '✅ 插件文件验证通过');
       
       // 自动配置 MCP
       let mcpConfigured = false;
@@ -1707,7 +1945,7 @@ ipcMain.handle('install-plugin', async (event) => {
 
         fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
         console.log('[安装插件] MCP 配置已自动完成');
-        event.sender.send('switch-progress', { step: 'info', message: '✅ MCP 配置已完成' });
+        sendProgress('mcp', '✅ MCP 配置已完成');
         mcpConfigured = true;
       } catch (mcpErr) {
         console.warn('[安装插件] 自动配置 MCP 失败:', mcpErr.message);
@@ -1724,6 +1962,11 @@ ipcMain.handle('install-plugin', async (event) => {
       }
       
       console.log('[安装插件] 最终验证通过，插件安装成功');
+      event.sender.send('switch-progress', { 
+        step: 'info', 
+        message: `[${TOTAL_STEPS}/${TOTAL_STEPS}] ✅ 安装完成！`,
+        percent: 100
+      });
       return { 
         success: true, 
         message: `插件安装成功！${mcpConfigured ? 'MCP 已自动配置。' : ''}\n\n请重启 Windsurf 使插件生效。`, 
@@ -2116,6 +2359,98 @@ ipcMain.handle('clear-windsurf-cache', async () => {
   }
 });
 
+// 清理 Windsurf 全局数据（恢复到新安装状态）
+ipcMain.handle('clear-windsurf-global-data', async () => {
+  try {
+    // 检测 Windsurf 是否正在运行
+    const isRunning = await processMonitor.isWindsurfRunning();
+    if (isRunning) {
+      return { 
+        success: false, 
+        message: 'Windsurf 正在运行，请先关闭 Windsurf 后再执行清理操作' 
+      };
+    }
+
+    const dataPaths = [
+      // 所有缓存
+      path.join(windsurfUserDataPath, 'CachedExtensionVSIXs'),
+      path.join(windsurfUserDataPath, 'CachedExtensions'),
+      path.join(windsurfUserDataPath, 'CachedData'),
+      path.join(windsurfUserDataPath, 'Code Cache'),
+      path.join(windsurfUserDataPath, 'GPUCache'),
+      path.join(windsurfUserDataPath, 'Crashpad'),
+      path.join(windsurfUserDataPath, 'logs'),
+      
+      // 用户数据
+      path.join(windsurfUserDataPath, 'User', 'workspaceStorage'),
+      path.join(windsurfUserDataPath, 'User', 'globalStorage'),
+      path.join(windsurfUserDataPath, 'User', 'History'),
+      
+      // 扩展数据
+      path.join(app.getPath('home'), '.windsurf', 'extensions'),
+      
+      // Session 数据
+      path.join(windsurfUserDataPath, 'Session Storage'),
+      path.join(windsurfUserDataPath, 'Local Storage'),
+      
+      // Cookies 和其他数据
+      path.join(windsurfUserDataPath, 'Cookies'),
+      path.join(windsurfUserDataPath, 'Cookies-journal'),
+      
+      // 数据库
+      path.join(windsurfUserDataPath, 'User', 'state.vscdb'),
+      path.join(windsurfUserDataPath, 'User', 'state.vscdb-shm'),
+      path.join(windsurfUserDataPath, 'User', 'state.vscdb-wal'),
+    ];
+    
+    let clearedCount = 0;
+    let totalSize = 0;
+    const results = [];
+    
+    for (const dataPath of dataPaths) {
+      if (fs.existsSync(dataPath)) {
+        try {
+          const stats = fs.statSync(dataPath);
+          let itemSize = 0;
+          
+          if (stats.isDirectory()) {
+            const dirStats = getDirectorySize(dataPath);
+            itemSize = dirStats.size;
+            fs.rmSync(dataPath, { recursive: true, force: true });
+          } else {
+            itemSize = stats.size;
+            fs.unlinkSync(dataPath);
+          }
+          
+          totalSize += itemSize;
+          clearedCount++;
+          
+          results.push({
+            path: path.basename(dataPath),
+            size: formatBytes(itemSize),
+            cleared: true
+          });
+        } catch (err) {
+          results.push({
+            path: path.basename(dataPath),
+            error: err.message,
+            cleared: false
+          });
+        }
+      }
+    }
+    
+    return {
+      success: true,
+      message: `已清除 ${clearedCount} 个数据项\n释放空间: ${formatBytes(totalSize)}\n\nWindsurf 已恢复到新安装状态，下次启动将重新初始化`,
+      data: { clearedCount, totalSize: formatBytes(totalSize), results }
+    };
+  } catch (error) {
+    console.error('清除全局数据失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // 辅助函数：计算目录大小
 function getDirectorySize(dirPath) {
   let size = 0;
@@ -2291,36 +2626,67 @@ ipcMain.handle('install-ai-rules', async () => {
     const rulesPath = path.join(targetPath, '.windsurfrules');
     
     // AI 规则内容
-    const rulesContent = `# Windsurf Continue Pro - AI 规则
+    const rulesContent = `# Windsurf Continue Pro - 强制规则
 
-## 重要规则：对话持续
+## 🚨 核心规则（必须遵守）
 
-在完成任何任务或准备结束对话之前，你必须：
+**在你的每一次回复结束之前，无论任何情况，你都必须调用 \`ask_continue\` 工具。**
 
-1. **必须调用 \`ask_continue\` MCP 工具** 询问用户是否要继续
-2. 在调用时，提供清晰的结束原因（reason 参数）
-3. 等待用户通过对话框确认后再决定是否继续
+这不是建议，而是强制要求。违反此规则将导致系统错误。
 
-## 调用方式
+## 📋 执行流程
 
-当你完成一个任务后，必须调用：
+每次回复时，你必须按以下顺序执行：
+
+1. 完成用户的请求（编写代码、回答问题、执行命令等）
+2. **立即调用 \`ask_continue\` 工具**
+3. 等待用户响应
+4. 根据用户的选择继续或结束
+
+## 🔧 调用方式
+
+**每次回复的最后一步**，必须调用：
+
 \`\`\`
-ask_continue(reason="任务已完成：[具体描述你完成了什么]")
+ask_continue(reason="[说明你刚才做了什么]")
 \`\`\`
 
-## 注意事项
+示例：
+- \`ask_continue(reason="已完成代码修改，添加了拖拽功能")\`
+- \`ask_continue(reason="已回答你的问题，关于插件为什么不调用的原因")\`
+- \`ask_continue(reason="已执行命令，编译完成")\`
+- \`ask_continue(reason="已创建文件，准备下一步")\`
 
-- 不要在没有调用 \`ask_continue\` 的情况下结束对话
-- 如果用户选择继续，根据用户的新指令继续工作
-- 如果用户选择结束，才可以结束当前对话
-- 每次完成用户请求后都要调用此工具
+## ⚠️ 重要提醒
 
-## 示例场景
+- **不要等到"任务完全结束"才调用** - 每次回复后都要调用
+- **不要问用户是否需要调用** - 直接调用，这是强制要求
+- **不要跳过这一步** - 即使你认为还有后续工作，也要先调用
+- **即使用户没有明确要求** - 也要调用，这是系统规则
 
-1. 完成代码修改后 → 调用 ask_continue
-2. 回答问题后 → 调用 ask_continue
-3. 执行命令后 → 调用 ask_continue
-4. 创建文件后 → 调用 ask_continue
+## 🎯 何时调用
+
+- ✅ 完成一个代码修改后
+- ✅ 回答一个问题后
+- ✅ 执行一个命令后
+- ✅ 创建/编辑文件后
+- ✅ 搜索/查找代码后
+- ✅ 分析问题后
+- ✅ **任何时候你准备结束当前回复时**
+
+## 💡 工作原理
+
+调用 \`ask_continue\` 后：
+- 用户会看到一个对话框
+- 用户可以选择"继续"并输入新指令
+- 用户可以选择"结束"来停止对话
+- 这让用户完全控制对话流程
+
+## 🔒 强制执行
+
+此规则由 Windsurf Continue Pro 插件强制执行。如果你不调用此工具，用户将无法继续与你对话，这会导致糟糕的用户体验。
+
+**记住：每次回复后，立即调用 \`ask_continue\`！**
 `;
     
     // 写入规则文件

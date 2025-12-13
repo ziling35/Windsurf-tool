@@ -127,6 +127,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 清除 Windsurf 缓存
   clearWindsurfCache: () => ipcRenderer.invoke('clear-windsurf-cache'),
   
+  // 清除 Windsurf 全局数据（恢复到新安装状态）
+  clearWindsurfGlobalData: () => ipcRenderer.invoke('clear-windsurf-global-data'),
+  
   // 清除插件激活缓存（专门解决激活问题）
   clearPluginActivationCache: () => ipcRenderer.invoke('clear-plugin-activation-cache'),
   
