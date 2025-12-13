@@ -230,6 +230,7 @@ function detectWindsurfExecutable() {
       path.join(process.env.PROGRAMFILES || 'C:\\Program Files', 'Windsurf'),
       path.join(process.env['PROGRAMFILES(X86)'] || 'C:\\Program Files (x86)', 'Windsurf'),
       'Windsurf', // 根目录
+      'programe1\\windsurf', // 用户自定义路径
       path.join('Program Files', 'Windsurf'),
       path.join('Program Files (x86)', 'Windsurf')
     ];
@@ -2137,6 +2138,51 @@ Remove-Item -Path "$PSCommandPath" -Force -ErrorAction SilentlyContinue
           fs.mkdirSync(mcpConfigDir, { recursive: true });
         }
         
+        // 使用固定端口号（确保插件和MCP服务器使用相同端口）
+        const defaultPort = 35719;
+        let httpPort = defaultPort;
+        
+        // 检查是否有现有端口文件
+        try {
+          const globalPortFile = path.join(app.getPath('home'), '.ask_continue_port');
+          if (fs.existsSync(globalPortFile)) {
+            const portContent = fs.readFileSync(globalPortFile, 'utf-8').trim();
+            try {
+              const portData = JSON.parse(portContent);
+              httpPort = portData.port || defaultPort;
+            } catch {
+              httpPort = parseInt(portContent) || defaultPort;
+            }
+            console.log('[安装插件] 检测到已有HTTP端口:', httpPort);
+          } else {
+            console.log('[安装插件] 未检测到端口文件，使用默认端口:', defaultPort);
+          }
+        } catch (portErr) {
+          console.warn('[安装插件] 读取端口文件失败:', portErr.message);
+        }
+        
+        // 【重要修复】预先写入端口文件，确保插件启动时能读取到正确的端口
+        // 这样可以避免插件使用不同的端口导致连接失败
+        try {
+          const globalPortFile = path.join(app.getPath('home'), '.ask_continue_port');
+          const portFileData = {
+            port: httpPort,
+            pid: -1, // 客户端写入，暂无 PID
+            timestamp: new Date().toISOString(),
+            version: '1.0.0',
+            source: 'client-install' // 标记来源
+          };
+          fs.writeFileSync(globalPortFile, JSON.stringify(portFileData, null, 2), 'utf-8');
+          console.log('[安装插件] ✓ 已预写入端口文件:', globalPortFile, '端口:', httpPort);
+          
+          // 同时写入到 Windsurf 配置目录
+          const windsurfPortFile = path.join(mcpConfigDir, '.ask_continue_port');
+          fs.writeFileSync(windsurfPortFile, JSON.stringify(portFileData, null, 2), 'utf-8');
+          console.log('[安装插件] ✓ 已写入 Windsurf 配置目录端口文件');
+        } catch (writeErr) {
+          console.warn('[安装插件] 写入端口文件失败:', writeErr.message);
+        }
+        
         // 合并现有配置，避免覆盖用户其他 MCP 配置
         let mcpConfig = { mcpServers: {} };
         if (fs.existsSync(mcpConfigPath)) {
@@ -2144,11 +2190,24 @@ Remove-Item -Path "$PSCommandPath" -Force -ErrorAction SilentlyContinue
           if (parsed.ok && parsed.data) mcpConfig = parsed.data;
         }
         mcpConfig.mcpServers = mcpConfig.mcpServers || {};
-        mcpConfig.mcpServers.ask_continue = {
+        
+        const finalPort = httpPort;
+        
+        const mcpServerConfig = {
           command: 'node',
           args: [mcpServerPath.replace(/\\/g, '/')],
+          env: {
+            WINDSURF_PRO_HTTP_PORT: String(finalPort)
+          },
           disabled: false
         };
+        
+        console.log('[安装插件] MCP配置已添加HTTP_PORT环境变量:', finalPort);
+        if (!httpPort) {
+          console.log('[安装插件] 未检测到已有HTTP端口，使用默认端口:', defaultPort);
+        }
+        
+        mcpConfig.mcpServers.ask_continue = mcpServerConfig;
 
         fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
         console.log('[安装插件] MCP 配置已自动完成');
@@ -2361,11 +2420,14 @@ ipcMain.handle('update-plugin', async (event, { targetVersion, downloadUrl }) =>
           mcpConfig.mcpServers.ask_continue = {
             command: 'node',
             args: [mcpServerPath.replace(/\\/g, '/')],
+            env: {
+              WINDSURF_PRO_HTTP_PORT: '35719'
+            },
             disabled: false
           };
 
           fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
-          console.log('[更新插件] MCP 配置已更新');
+          console.log('[更新插件] MCP 配置已更新，HTTP 端口: 35719');
         }
       } catch (mcpErr) {
         console.warn('[更新插件] 更新 MCP 配置失败:', mcpErr.message);
@@ -2735,16 +2797,23 @@ ipcMain.handle('configure-mcp', async () => {
       if (parsed.ok && parsed.data) mcpConfig = parsed.data;
     }
     
-    // 添加 ask_continue 配置
+    // 添加 ask_continue 配置（包含 HTTP 端口环境变量）
     mcpConfig.mcpServers = mcpConfig.mcpServers || {};
     mcpConfig.mcpServers.ask_continue = {
       command: 'node',
       args: [mcpServerPath.replace(/\\/g, '/')],
+      env: {
+        WINDSURF_PRO_HTTP_PORT: '35719'
+      },
       disabled: false
     };
     
     // 写入配置
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
+    
+    console.log('[MCP] 配置已写入:', mcpConfigPath);
+    console.log('[MCP] HTTP 端口:', '35719');
+    console.log('[MCP] 服务器路径:', mcpServerPath);
     
     return { success: true, message: 'MCP 配置成功！请重启 Windsurf 使配置生效。' };
   } catch (error) {
@@ -2793,6 +2862,9 @@ ipcMain.handle('reset-mcp-config', async () => {
     mcpConfig.mcpServers.ask_continue = {
       command: 'node',
       args: [mcpServerPath.replace(/\\/g, '/')],
+      env: {
+        WINDSURF_PRO_HTTP_PORT: '35719'
+      },
       disabled: false
     };
     
@@ -2800,6 +2872,7 @@ ipcMain.handle('reset-mcp-config', async () => {
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
     
     console.log('[MCP] 配置已重置:', mcpConfigPath);
+    console.log('[MCP] HTTP 端口:', '35719');
     console.log('[MCP] 服务器路径:', mcpServerPath);
     
     return { 
@@ -2997,6 +3070,9 @@ ipcMain.handle('configure-kiro-mcp', async (event, options = {}) => {
     mcpConfig.mcpServers.ask_continue = {
       command: 'node',
       args: [mcpServerPath.replace(/\\/g, '/')],
+      env: {
+        WINDSURF_PRO_HTTP_PORT: '35719'
+      },
       disabled: false,
       autoApprove: ['ask_continue']
     };
@@ -3005,6 +3081,7 @@ ipcMain.handle('configure-kiro-mcp', async (event, options = {}) => {
     fs.writeFileSync(kiroMcpConfigPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
     
     console.log('[Kiro MCP] 配置已更新:', kiroMcpConfigPath);
+    console.log('[Kiro MCP] HTTP 端口: 35719');
     console.log('[Kiro MCP] 服务器路径:', mcpServerPath);
     
     return { 
@@ -3161,12 +3238,15 @@ ipcMain.handle('install-plugin-to-kiro', async () => {
         mcpConfig.mcpServers.ask_continue = {
           command: 'node',
           args: [mcpServerPath.replace(/\\/g, '/')],
+          env: {
+            WINDSURF_PRO_HTTP_PORT: '35719'
+          },
           disabled: false,
           autoApprove: ['ask_continue']
         };
         
         fs.writeFileSync(kiroMcpPath, JSON.stringify(mcpConfig, null, 2), 'utf-8');
-        console.log('[Kiro] MCP 配置已完成');
+        console.log('[Kiro] MCP 配置已完成，HTTP 端口: 35719');
       } catch (mcpErr) {
         console.warn('[Kiro] 自动配置 MCP 失败:', mcpErr.message);
       }
