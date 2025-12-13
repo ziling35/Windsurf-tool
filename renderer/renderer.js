@@ -2,8 +2,8 @@
  * PaperCrane-Windsurf - 渲染进程 UI 逻辑（重构版）
  */
 
-// 当前客户端版本号
-const CLIENT_VERSION = '1.0.2';
+// 当前客户端版本号（会在初始化时从主进程获取）
+let CLIENT_VERSION = '1.0.0';
 
 // 版本检查相关
 let lastVersionCheck = 0; // 上次版本检查时间戳
@@ -218,6 +218,96 @@ function showModal(title, message) {
     confirmBtn.addEventListener('click', handleConfirm);
     cancelBtn.addEventListener('click', handleCancel);
   });
+}
+
+// 验证项目工作目录是否已设置（必填）
+// 如果未设置，显示弹窗提醒并高亮输入框
+// 返回工作目录路径（如果有效）或 null（如果无效）
+function validateWorkspacePath(showAlert = true) {
+  const aiRulesPathInput = document.getElementById('ai-rules-path');
+  const aiRulesPath = aiRulesPathInput ? aiRulesPathInput.value.trim() : '';
+  
+  // 如果插件管理页面的工作目录为空，尝试使用主页的工作目录
+  let workspacePath = aiRulesPath;
+  if (!workspacePath) {
+    const mainWorkspaceInput = document.getElementById('workspace-path-input');
+    workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
+  }
+  
+  if (!workspacePath) {
+    if (showAlert) {
+      log('❌ 未设置项目工作目录', 'error');
+      showToast('请先设置项目工作目录！这是必填项。', 'error', 5000);
+      
+      // 高亮显示工作目录输入框
+      if (aiRulesPathInput) {
+        aiRulesPathInput.style.borderColor = '#ef4444';
+        aiRulesPathInput.style.boxShadow = '0 0 0 3px rgba(239, 68, 68, 0.2)';
+        aiRulesPathInput.focus();
+        setTimeout(() => {
+          aiRulesPathInput.style.borderColor = '';
+          aiRulesPathInput.style.boxShadow = '';
+        }, 3000);
+      }
+      
+      // 显示弹窗提醒
+      showModal(
+        '请设置项目工作目录',
+        '项目工作目录是必填项！\n\n请在"项目工作目录"输入框中选择或输入您的项目路径。\n\nAI 规则文件将安装到此目录中。'
+      );
+    }
+    return null;
+  }
+  
+  return workspacePath;
+}
+
+// 安装 AI 规则到工作目录（生成 .ask_continue_port 和 .windsurfrules 文件）
+async function installAIRulesToWorkspace() {
+  const workspacePath = validateWorkspacePath();
+  if (!workspacePath) return;
+  
+  const btn = document.getElementById('install-ai-rules-to-workspace-btn');
+  if (!btn) return;
+  
+  const originalHtml = btn.innerHTML;
+  
+  btn.disabled = true;
+  btn.innerHTML = '<i data-lucide="loader"></i><span>安装中...</span>';
+  try { lucide.createIcons(); } catch (e) {}
+  
+  log('开始安装 AI 规则到工作目录...', 'info');
+  log(`📁 目标目录: ${workspacePath}`, 'info');
+  showToast('正在安装 AI 规则...', 'info');
+  
+  try {
+    const result = await window.electronAPI.installAIRulesToWorkspace(workspacePath);
+    
+    if (result.success) {
+      showToast('AI 规则安装成功！', 'success');
+      log(`✅ ${result.message}`, 'success');
+      
+      // 显示成功提示
+      await showModal(
+        'AI 规则已安装',
+        `已在项目目录中生成以下文件：\n\n` +
+        `• .windsurfrules - AI 行为规则文件\n` +
+        `• .ask_continue_port - MCP 服务端口配置\n\n` +
+        `目录: ${workspacePath}\n\n` +
+        `安装后，AI 在完成每个任务后都会弹出对话框询问是否继续。`
+      );
+    } else {
+      showToast(`安装失败: ${result.message}`, 'error');
+      log(`❌ 安装失败: ${result.message}`, 'error');
+    }
+  } catch (error) {
+    showToast(`安装失败: ${error.message}`, 'error');
+    log(`❌ 安装失败: ${error.message}`, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    try { lucide.createIcons(); } catch (e) {}
+  }
 }
 
 // 显示账号密码弹窗（带复制功能）
@@ -1850,10 +1940,10 @@ function createPluginCard(plugin) {
         <div id="plugin-update-info-${pluginId}" style="display: none; margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
           <strong style="color: #92400e;" id="plugin-update-title-${pluginId}">检测中...</strong>
           <p style="margin: 5px 0 0 0; color: #92400e; font-size: 0.9em;" id="plugin-update-desc-${pluginId}"></p>
-          <button id="update-plugin-btn-${pluginId}" class="btn btn-warning" style="margin-top: 10px; padding: 6px 12px; font-size: 0.85em;" onclick="updatePluginByName('${plugin.name}')">
+          <!-- <button id="update-plugin-btn-${pluginId}" class="btn btn-warning" style="margin-top: 10px; padding: 6px 12px; font-size: 0.85em;" onclick="updatePluginByName('${plugin.name}')">
             <i data-lucide="download-cloud"></i>
             <span>立即更新</span>
-          </button>
+          </button> -->
         </div>
       </div>
     </div>
@@ -1870,8 +1960,12 @@ function createPluginCard(plugin) {
           <i data-lucide="folder"></i>
           <span>选择</span>
         </button>
+        <button id="install-ai-rules-to-workspace-btn" class="btn btn-primary btn-small" title="安装 AI 规则到此目录（生成 .windsurfrules 和 .ask_continue_port 文件）" onclick="installAIRulesToWorkspace()">
+          <i data-lucide="file-plus"></i>
+          <span>安装AI规则</span>
+        </button>
       </div>
-      <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，留空则使用主页设置的工作目录</small>
+      <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，点击"安装AI规则"生成 .windsurfrules 和 .ask_continue_port 文件</small>
     </div>
     ` : ''}
 
@@ -2299,17 +2393,25 @@ async function installPlugin(forceInstall = false) {
   }
   
   if (!workspacePath) {
-    log('❌ 未设置工作目录，无法安装插件', 'error');
-    showToast('请先设置工作目录！这是安装插件的必要条件。', 'error', 5000);
+    log('❌ 未设置项目工作目录，无法安装插件', 'error');
+    showToast('请先设置项目工作目录！这是必填项。', 'error', 5000);
     
     // 高亮显示工作目录输入框
     if (aiRulesPathInput) {
       aiRulesPathInput.style.borderColor = '#ef4444';
+      aiRulesPathInput.style.boxShadow = '0 0 0 3px rgba(239, 68, 68, 0.2)';
       aiRulesPathInput.focus();
       setTimeout(() => {
         aiRulesPathInput.style.borderColor = '';
+        aiRulesPathInput.style.boxShadow = '';
       }, 3000);
     }
+    
+    // 显示弹窗提醒
+    showModal(
+      '请设置项目工作目录',
+      '项目工作目录是必填项！\n\n请在"项目工作目录"输入框中选择或输入您的项目路径。\n\n设置工作目录后才能执行安装或重新安装操作。'
+    );
     return;
   }
   
@@ -2443,6 +2545,9 @@ async function installPlugin(forceInstall = false) {
 
 // 激活插件
 async function activatePlugin() {
+  // 验证项目工作目录是否已设置
+  if (!validateWorkspacePath()) return;
+  
   const btn = document.getElementById('activate-plugin-btn');
   if (!btn) return;
   
@@ -2654,6 +2759,9 @@ async function clearWindsurfGlobalData() {
 
 // 配置 MCP
 async function configureMCP() {
+  // 验证项目工作目录是否已设置
+  if (!validateWorkspacePath()) return;
+  
   const btn = document.getElementById('configure-mcp-btn');
   if (!btn) return;
   
@@ -3480,11 +3588,21 @@ function showForceUpdateModal(message, serverVersion) {
 
 // ===== 初始化 =====
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
   log('🎐 PaperCrane-Windsurf 已启动', 'success');
   
   // 初始化更多操作下拉菜单事件委托
   initMoreActionsMenu();
+  
+  // 从主进程获取版本号并更新显示
+  try {
+    const versionResult = await window.electronAPI.getAppVersion();
+    if (versionResult && versionResult.success && versionResult.version) {
+      CLIENT_VERSION = versionResult.version;
+    }
+  } catch (err) {
+    console.error('获取版本号失败:', err);
+  }
   
   // 动态设置版本号显示
   const versionElement = document.querySelector('.sidebar-version');

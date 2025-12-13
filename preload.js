@@ -7,6 +7,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // 暴露安全的 API 给渲染进程
 contextBridge.exposeInMainWorld('electronAPI', {
+  // 获取应用版本号（从 package.json 读取）
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  
   // 获取当前账号
   getCurrentAccount: () => ipcRenderer.invoke('get-current-account'),
   
@@ -138,6 +141,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 安装 AI 规则（强制 AI 使用工具）
   installAIRules: () => ipcRenderer.invoke('install-ai-rules'),
+  
+  // 安装 AI 规则到指定工作目录（生成 .windsurfrules 和 .ask_continue_port 文件）
+  installAIRulesToWorkspace: (workspacePath) => ipcRenderer.invoke('install-ai-rules-to-workspace', workspacePath),
   
   // 配置 Kiro MCP
   configureKiroMCP: (options) => ipcRenderer.invoke('configure-kiro-mcp', options),

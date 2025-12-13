@@ -405,6 +405,17 @@ function createWindow() {
 
 // ===== IPC 处理器 =====
 
+// 获取应用版本号（从 package.json 读取）
+ipcMain.handle('get-app-version', async () => {
+  try {
+    const packageJson = require('./package.json');
+    return { success: true, version: packageJson.version };
+  } catch (error) {
+    console.error('获取版本号失败:', error);
+    return { success: false, version: '未知' };
+  }
+});
+
 // 获取当前账号信息
 ipcMain.handle('get-current-account', async () => {
   try {
@@ -2979,6 +2990,111 @@ ask_continue(reason="[说明你刚才做了什么]")
     };
   } catch (error) {
     console.error('安装 AI 规则失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 安装 AI 规则到指定工作目录（生成 .windsurfrules 和 .ask_continue_port 文件）
+ipcMain.handle('install-ai-rules-to-workspace', async (event, workspacePath) => {
+  try {
+    if (!workspacePath || !workspacePath.trim()) {
+      return { 
+        success: false, 
+        message: '请先设置项目工作目录' 
+      };
+    }
+    
+    if (!fs.existsSync(workspacePath)) {
+      return { 
+        success: false, 
+        message: `目录不存在: ${workspacePath}` 
+      };
+    }
+    
+    // 1. 生成 .windsurfrules 文件
+    const rulesPath = path.join(workspacePath, '.windsurfrules');
+    const rulesContent = `# Windsurf Continue Pro - 强制规则
+
+## 🚨 核心规则（必须遵守）
+
+**在你的每一次回复结束之前，无论任何情况，你都必须调用 \`ask_continue\` 工具。**
+
+这不是建议，而是强制要求。违反此规则将导致系统错误。
+
+## 📋 执行流程
+
+每次回复时，你必须按以下顺序执行：
+
+1. 完成用户的请求（编写代码、回答问题、执行命令等）
+2. **立即调用 \`ask_continue\` 工具**
+3. 等待用户响应
+4. 根据用户的选择继续或结束
+
+## 🔧 调用方式
+
+**每次回复的最后一步**，必须调用：
+
+\`\`\`
+ask_continue(reason="[说明你刚才做了什么]")
+\`\`\`
+
+示例：
+- \`ask_continue(reason="已完成代码修改，添加了拖拽功能")\`
+- \`ask_continue(reason="已回答你的问题，关于插件为什么不调用的原因")\`
+- \`ask_continue(reason="已执行命令，编译完成")\`
+- \`ask_continue(reason="已创建文件，准备下一步")\`
+
+## ⚠️ 重要提醒
+
+- **不要等到"任务完全结束"才调用** - 每次回复后都要调用
+- **不要问用户是否需要调用** - 直接调用，这是强制要求
+- **不要跳过这一步** - 即使你认为还有后续工作，也要先调用
+- **即使用户没有明确要求** - 也要调用，这是系统规则
+
+## 🎯 何时调用
+
+- ✅ 完成一个代码修改后
+- ✅ 回答一个问题后
+- ✅ 执行一个命令后
+- ✅ 创建/编辑文件后
+- ✅ 搜索/查找代码后
+- ✅ 分析问题后
+- ✅ **任何时候你准备结束当前回复时**
+
+## 💡 工作原理
+
+调用 \`ask_continue\` 后：
+- 用户会看到一个对话框
+- 用户可以选择"继续"并输入新指令
+- 用户可以选择"结束"来停止对话
+- 这让用户完全控制对话流程
+
+## 🔒 强制执行
+
+此规则由 Windsurf Continue Pro 插件强制执行。如果你不调用此工具，用户将无法继续与你对话，这会导致糟糕的用户体验。
+
+**记住：每次回复后，立即调用 \`ask_continue\`！**
+`;
+    
+    // 2. 生成 .ask_continue_port 文件（默认端口 35719）
+    const portFilePath = path.join(workspacePath, '.ask_continue_port');
+    const portContent = '35719';
+    
+    // 写入文件
+    fs.writeFileSync(rulesPath, rulesContent, 'utf-8');
+    fs.writeFileSync(portFilePath, portContent, 'utf-8');
+    
+    return { 
+      success: true, 
+      message: `AI 规则已安装到: ${workspacePath}\n\n已生成文件：\n• .windsurfrules\n• .ask_continue_port`,
+      data: { 
+        rulesPath,
+        portFilePath,
+        workspacePath
+      }
+    };
+  } catch (error) {
+    console.error('安装 AI 规则到工作目录失败:', error);
     return { success: false, message: error.message };
   }
 });
