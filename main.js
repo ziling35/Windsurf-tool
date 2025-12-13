@@ -1479,51 +1479,58 @@ ipcMain.handle('install-plugin', async (event) => {
     let latestVersion = '1.0.0';
     let downloadUrl = null;
     
+    console.log('[安装插件] ========== 开始获取插件信息 ==========');
     try {
       event.sender.send('switch-progress', { step: 'info', message: '⏳ 检查插件版本...' });
       const pluginInfo = await KeyManager.checkPluginUpdate('windsurf-continue-pro', '0.0.0');
       if (pluginInfo.success && pluginInfo.data) {
         latestVersion = pluginInfo.data.latest_version || '1.0.0';
         downloadUrl = pluginInfo.data.download_url;
-        console.log('[安装插件] 服务器最新版本:', latestVersion);
-        console.log('[安装插件] 下载地址:', downloadUrl);
+        console.log('[安装插件] ✅ 服务器最新版本:', latestVersion);
+        console.log('[安装插件] ✅ 下载地址:', downloadUrl);
+      } else {
+        console.warn('[安装插件] ⚠️ 服务器未返回插件信息，使用默认版本');
       }
     } catch (err) {
-      console.warn('[安装插件] 获取服务器插件信息失败:', err.message);
+      console.warn('[安装插件] ⚠️ 获取服务器插件信息失败:', err.message);
     }
     
     const pluginFileName = `windsurf-continue-pro-${latestVersion}.vsix`;
-    
-    // 尝试多个可能的路径
-    let vsixPath = path.join(__dirname, 'resources', pluginFileName);
-    
-    // 如果第一个路径不存在，尝试 app.getAppPath()
-    if (!fs.existsSync(vsixPath)) {
-      vsixPath = path.join(app.getAppPath(), 'resources', pluginFileName);
-    }
-    
-    // 如果还不存在，尝试项目根目录
-    if (!fs.existsSync(vsixPath)) {
-      vsixPath = path.join(process.cwd(), 'resources', pluginFileName);
-    }
-    
-    // 如果还不存在，尝试下载目录（之前下载过的）
     const downloadedPath = path.join(app.getPath('userData'), 'downloads', pluginFileName);
-    if (!fs.existsSync(vsixPath) && fs.existsSync(downloadedPath)) {
-      vsixPath = downloadedPath;
-    }
     
-    console.log('检查插件路径:', vsixPath);
-    console.log('__dirname:', __dirname);
-    console.log('app.getAppPath():', app.getAppPath());
-    console.log('process.cwd():', process.cwd());
+    console.log('[安装插件] ========== 查找本地 VSIX 文件 ==========');
+    console.log('[安装插件] 目标文件名:', pluginFileName);
+    
+    // 优先使用已下载的文件
+    let vsixPath = null;
+    if (fs.existsSync(downloadedPath)) {
+      vsixPath = downloadedPath;
+      console.log('[安装插件] ✅ 找到已下载的文件:', vsixPath);
+    } else {
+      // 尝试多个可能的本地路径
+      const possiblePaths = [
+        path.join(__dirname, 'resources', pluginFileName),
+        path.join(app.getAppPath(), 'resources', pluginFileName),
+        path.join(process.cwd(), 'resources', pluginFileName)
+      ];
+      
+      console.log('[安装插件] 检查本地路径:');
+      for (const testPath of possiblePaths) {
+        console.log(`  - ${testPath}: ${fs.existsSync(testPath) ? '✅ 存在' : '❌ 不存在'}`);
+        if (!vsixPath && fs.existsSync(testPath)) {
+          vsixPath = testPath;
+        }
+      }
+    }
     
     // 如果本地不存在，尝试从服务器下载
-    if (!fs.existsSync(vsixPath)) {
+    if (!vsixPath) {
+      console.log('[安装插件] ⚠️ 本地未找到 VSIX 文件');
       if (!downloadUrl) {
+        console.error('[安装插件] ❌ 无法获取下载地址');
         return { 
           success: false, 
-          message: `插件文件不存在且无法获取下载地址\n\n检查的路径: ${vsixPath}\n\n请确保网络连接正常或手动放置插件文件` 
+          message: `插件文件不存在且无法获取下载地址\n\n目标文件: ${pluginFileName}\n\n可能原因：\n1. 服务器连接失败\n2. 本地 resources 目录缺少插件文件\n\n建议：\n1. 检查网络连接\n2. 确保 resources 目录下有 ${pluginFileName}` 
         };
       }
       
@@ -1585,18 +1592,25 @@ ipcMain.handle('install-plugin', async (event) => {
       console.log('[安装插件] VSIX 路径:', vsixPath);
       
       try {
+        console.log('[安装插件] ========== 开始 CLI 安装 ==========');
+        console.log('[安装插件] CLI 路径:', cliPath);
+        console.log('[安装插件] VSIX 路径:', vsixPath);
+        console.log('[安装插件] 扩展目录:', extensionsPath);
+        
         const { stdout, stderr } = await execFileAsync(cliPath, ['--install-extension', vsixPath, '--force'], {
           timeout: 120000, // 2分钟超时
           windowsHide: true
         });
         
-        if (stdout) console.log('[安装插件] CLI 输出:', stdout);
-        if (stderr) console.warn('[安装插件] CLI 错误:', stderr);
+        console.log('[安装插件] ========== CLI 执行完成 ==========');
+        if (stdout) console.log('[安装插件] CLI 标准输出:', stdout);
+        if (stderr) console.log('[安装插件] CLI 错误输出:', stderr);
         
         // 等待文件系统同步
+        console.log('[安装插件] 等待文件系统同步 (2秒)...');
         await new Promise(resolve => setTimeout(resolve, 2000));
         
-        console.log('[安装插件] CLI 安装完成');
+        console.log('[安装插件] CLI 安装完成，开始验证...');
         event.sender.send('switch-progress', { step: 'info', message: '✅ 插件已安装' });
       } catch (cliError) {
         console.error('[安装插件] CLI 安装失败:', cliError);
@@ -1604,24 +1618,46 @@ ipcMain.handle('install-plugin', async (event) => {
       }
       
       // 查找已安装的插件目录
-      const targetDir = path.join(extensionsPath, `papercrane-team.windsurf-continue-pro-${latestVersion}`);
+      // 先列出所有扩展目录，找到匹配的插件
+      let actualTargetDir = null;
       
-      // 如果使用 papercrane-team 作为 publisher 找不到，尝试其他可能的目录名
-      let actualTargetDir = targetDir;
-      if (!fs.existsSync(targetDir)) {
-        // 尝试其他可能的目录名
-        const possibleDirs = [
-          `papercrane.windsurf-continue-pro-${latestVersion}`,
-          `undefined_publisher.windsurf-continue-pro-${latestVersion}`
-        ];
+      console.log('[安装插件] ========== 开始查找插件目录 ==========');
+      console.log('[安装插件] 扩展目录路径:', extensionsPath);
+      console.log('[安装插件] 扩展目录是否存在:', fs.existsSync(extensionsPath));
+      
+      if (fs.existsSync(extensionsPath)) {
+        const allExtensions = fs.readdirSync(extensionsPath);
+        console.log('[安装插件] 扩展目录中的所有文件/目录 (共 ' + allExtensions.length + ' 个):');
+        allExtensions.forEach(ext => console.log('  - ' + ext));
         
-        for (const dirName of possibleDirs) {
-          const testPath = path.join(extensionsPath, dirName);
-          if (fs.existsSync(testPath)) {
-            actualTargetDir = testPath;
-            break;
-          }
+        // 查找包含 windsurf-continue-pro 或 ask-continue 的目录
+        console.log('[安装插件] 查找包含 "windsurf-continue-pro" 或 "ask-continue" 的目录...');
+        const matchedDirs = allExtensions.filter(dir => 
+          dir.includes('windsurf-continue-pro') || dir.includes('ask-continue')
+        );
+        
+        console.log('[安装插件] 匹配的插件目录 (共 ' + matchedDirs.length + ' 个):', matchedDirs);
+        
+        if (matchedDirs.length > 0) {
+          // 如果有多个，选择版本号最高的
+          matchedDirs.sort((a, b) => {
+            const versionA = extractVersionFromDirName(a);
+            const versionB = extractVersionFromDirName(b);
+            return compareVersions(versionA, versionB);
+          });
+          actualTargetDir = path.join(extensionsPath, matchedDirs[matchedDirs.length - 1]);
+          console.log('[安装插件] 选择的插件目录:', actualTargetDir);
         }
+      }
+      
+      if (!actualTargetDir) {
+        console.error('[安装插件] ========== 错误：未找到插件安装目录 ==========');
+        console.error('[安装插件] 扩展目录路径:', extensionsPath);
+        console.error('[安装插件] 这意味着 CLI 安装可能失败，或插件目录名称不包含关键词');
+        return { 
+          success: false, 
+          message: `未找到插件安装目录\n\n扩展目录: ${extensionsPath}\n\n可能原因：\n1. CLI 安装失败但未报错\n2. 插件目录命名格式不符合预期\n3. 文件系统同步延迟\n\n建议：重启客户端后重试，或手动检查扩展目录` 
+        };
       }
       
       console.log('[安装插件] 插件目录:', actualTargetDir);
