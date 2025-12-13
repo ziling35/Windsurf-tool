@@ -18,6 +18,42 @@ const fs = require('fs');
    return ['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY'].includes(err.code);
  }
 
+ /**
+  * 检查文件名或插件ID是否是我们的插件
+  * 使用严格匹配规则，避免误删其他插件
+  * @param {string} name - 文件名、目录名或插件ID
+  * @returns {boolean} 是否是我们的插件
+  */
+ function isOurPlugin(name) {
+   if (!name || typeof name !== 'string') return false;
+   
+   const lowerName = name.toLowerCase();
+   
+   // 精确匹配我们的插件名称
+   const exactMatches = [
+     'papercrane-team.windsurf-continue-pro',
+     'undefined_publisher.windsurf-continue-pro',
+     'windsurf-continue-pro',
+     'papercrane.windsurf-continue-pro',
+     'ask-continue'
+   ];
+   
+   if (exactMatches.includes(lowerName)) {
+     return true;
+   }
+   
+   // 前缀匹配（带版本号的目录）
+   const prefixMatches = [
+     'papercrane-team.windsurf-continue-pro-',
+     'undefined_publisher.windsurf-continue-pro-',
+     'papercrane.windsurf-continue-pro-',
+     'windsurf-continue-pro-',
+     'ask-continue-'
+   ];
+   
+   return prefixMatches.some(prefix => lowerName.startsWith(prefix));
+ }
+
  async function removePathWithRetries(targetPath, { isDir = false, maxRetries = 5 } = {}) {
    for (let attempt = 0; attempt <= maxRetries; attempt++) {
      try {
@@ -1270,7 +1306,7 @@ async function checkPluginStatusInternal() {
       console.log('[插件检测] 扩展目录中的所有插件:', extensions);
 
       const candidateDirs = extensions
-        .filter(ext => ext.includes('windsurf-continue-pro') || ext.includes('ask-continue'))
+        .filter(ext => isOurPlugin(ext))
         .map(ext => ({ name: ext, fullPath: path.join(extensionsPath, ext), version: extractVersionFromDirName(ext) }));
 
       console.log('[插件检测] 找到的候选插件:', candidateDirs.map(c => c.name));
@@ -1427,15 +1463,12 @@ ipcMain.handle('install-plugin', async (event) => {
               return false;
             }
             
-            // 检查是否是我们的插件
-            const isOurPlugin = ext.identifier && 
-              (ext.identifier.id === 'papercrane-team.windsurf-continue-pro' ||
-               ext.identifier.id === 'undefined_publisher.windsurf-continue-pro' ||
-               ext.identifier.id === 'windsurf-continue-pro' ||
-               ext.identifier.id.includes('windsurf-continue-pro') ||
-               ext.identifier.id.includes('ask-continue'));
+            // 检查是否是我们的插件（严格匹配）
+            if (!ext.identifier || !ext.identifier.id) {
+              return true; // 保留没有 identifier 或 id 的扩展
+            }
             
-            if (isOurPlugin) {
+            if (isOurPlugin(ext.identifier.id)) {
               // 检查插件目录是否存在
               const pluginExists = fs.existsSync(ext.location.fsPath);
               console.log(`[安装插件] 检查插件: ${ext.identifier.id}`);
@@ -1605,7 +1638,7 @@ ipcMain.handle('install-plugin', async (event) => {
     sendProgress('cleanup', '⏳ 清除插件文件...');
     if (fs.existsSync(extensionsPath)) {
       const extensions = fs.readdirSync(extensionsPath);
-      const targetExts = extensions.filter(ext => ext.includes('windsurf-continue-pro') || ext.includes('ask-continue'));
+      const targetExts = extensions.filter(ext => isOurPlugin(ext));
       for (let i = 0; i < targetExts.length; i++) {
         const ext = targetExts[i];
         const extPath = path.join(extensionsPath, ext);
@@ -1628,7 +1661,7 @@ ipcMain.handle('install-plugin', async (event) => {
     if (fs.existsSync(cachedExtPath)) {
       const files = fs.readdirSync(cachedExtPath);
       for (const file of files) {
-        if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
+        if (isOurPlugin(file)) {
           const filePath = path.join(cachedExtPath, file);
           console.log(`[安装插件] 清除缓存文件: ${file}`);
           const delResult = await removePathWithRetries(filePath, { isDir: false, maxRetries: 10 });
@@ -1646,7 +1679,7 @@ ipcMain.handle('install-plugin', async (event) => {
     if (fs.existsSync(globalStoragePath)) {
       const extensions = fs.readdirSync(globalStoragePath);
       for (const ext of extensions) {
-        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
+        if (isOurPlugin(ext)) {
           const extPath = path.join(globalStoragePath, ext);
           console.log(`[安装插件] 清除 globalState: ${ext}`);
           const delResult = await removePathWithRetries(extPath, { isDir: true, maxRetries: 10 });
@@ -1671,7 +1704,7 @@ ipcMain.handle('install-plugin', async (event) => {
             if (fs.existsSync(wsStateFile)) {
               try {
                 const content = fs.readFileSync(wsStateFile, 'utf-8');
-                if (content.includes('windsurf-continue-pro') || content.includes('ask-continue')) {
+                if (content.includes('windsurf-continue-pro') || content.includes('ask-continue') || content.includes('papercrane-team') || content.includes('undefined_publisher')) {
                   console.log(`[安装插件] 清除工作区状态: ${workspace}`);
                   const delResult = await removePathWithRetries(wsPath, { isDir: true, maxRetries: 5 });
                   if (delResult.removed) {
@@ -1703,18 +1736,11 @@ ipcMain.handle('install-plugin', async (event) => {
         if (Array.isArray(extensions) && extensions.length > 0) {
           // 过滤掉所有我们的插件引用（无论目录是否存在）
           const validExtensions = extensions.filter(ext => {
-            if (!ext.identifier) {
-              return true; // 保留没有 identifier 的扩展
+            if (!ext.identifier || !ext.identifier.id) {
+              return true; // 保留没有 identifier 或 id 的扩展
             }
             
-            // 检查是否是我们的插件
-            const isOurPlugin = ext.identifier.id === 'papercrane-team.windsurf-continue-pro' ||
-              ext.identifier.id === 'undefined_publisher.windsurf-continue-pro' ||
-              ext.identifier.id === 'windsurf-continue-pro' ||
-              ext.identifier.id.includes('windsurf-continue-pro') ||
-              ext.identifier.id.includes('ask-continue');
-            
-            if (isOurPlugin) {
+            if (isOurPlugin(ext.identifier.id)) {
               console.log(`[安装插件] 🗑️ 删除插件引用: ${ext.identifier.id}`);
               return false; // 删除所有我们的插件引用
             }
@@ -1799,7 +1825,7 @@ ipcMain.handle('install-plugin', async (event) => {
     if (fs.existsSync(downloadsDir)) {
       const files = fs.readdirSync(downloadsDir);
       for (const file of files) {
-        if (file.includes('windsurf-continue-pro') && file.endsWith('.vsix')) {
+        if (isOurPlugin(file) && file.endsWith('.vsix')) {
           const oldFile = path.join(downloadsDir, file);
           try {
             fs.unlinkSync(oldFile);
@@ -2053,9 +2079,7 @@ Remove-Item -Path "$PSCommandPath" -Force -ErrorAction SilentlyContinue
         
         // 查找包含 windsurf-continue-pro 或 ask-continue 的目录
         console.log('[安装插件] 查找包含 "windsurf-continue-pro" 或 "ask-continue" 的目录...');
-        const matchedDirs = allExtensions.filter(dir => 
-          dir.includes('windsurf-continue-pro') || dir.includes('ask-continue')
-        );
+        const matchedDirs = allExtensions.filter(dir => isOurPlugin(dir));
         
         console.log('[安装插件] 匹配的插件目录 (共 ' + matchedDirs.length + ' 个):', matchedDirs);
         
@@ -2204,7 +2228,7 @@ ipcMain.handle('update-plugin', async (event, { targetVersion, downloadUrl }) =>
     if (fs.existsSync(extensionsPath)) {
       const extensions = fs.readdirSync(extensionsPath);
       for (const ext of extensions) {
-        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
+        if (isOurPlugin(ext)) {
           const extPath = path.join(extensionsPath, ext);
           const delResult = await removePathWithRetries(extPath, { isDir: true });
           if (delResult.removed) {
@@ -2221,7 +2245,7 @@ ipcMain.handle('update-plugin', async (event, { targetVersion, downloadUrl }) =>
     if (fs.existsSync(cachedExtPath)) {
       const files = fs.readdirSync(cachedExtPath);
       for (const file of files) {
-        if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
+        if (isOurPlugin(file)) {
           const filePath = path.join(cachedExtPath, file);
           const delResult = await removePathWithRetries(filePath, { isDir: false });
           if (delResult.removed) {
@@ -2385,7 +2409,7 @@ ipcMain.handle('activate-plugin', async () => {
       if (fs.existsSync(pluginCachePath)) {
         const files = fs.readdirSync(pluginCachePath);
         for (const file of files) {
-          if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
+          if (isOurPlugin(file)) {
             const filePath = path.join(pluginCachePath, file);
             const delResult = await removePathWithRetries(filePath, { isDir: false });
             if (delResult.removed) {
@@ -2920,9 +2944,7 @@ ipcMain.handle('configure-kiro-mcp', async (event, options = {}) => {
       // 在 Kiro 扩展目录中查找
       if (fs.existsSync(kiroExtensionsPath)) {
         const extensions = fs.readdirSync(kiroExtensionsPath);
-        const pluginDir = extensions.find(ext => 
-          ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')
-        );
+        const pluginDir = extensions.find(ext => isOurPlugin(ext));
         
         if (pluginDir) {
           const possiblePath = path.join(kiroExtensionsPath, pluginDir, 'out', 'mcpServerStandalone.js');
@@ -2938,9 +2960,7 @@ ipcMain.handle('configure-kiro-mcp', async (event, options = {}) => {
         const windsurfExtPath = path.join(app.getPath('home'), '.windsurf', 'extensions');
         if (fs.existsSync(windsurfExtPath)) {
           const extensions = fs.readdirSync(windsurfExtPath);
-          const pluginDir = extensions.find(ext => 
-            ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')
-          );
+          const pluginDir = extensions.find(ext => isOurPlugin(ext));
           
           if (pluginDir) {
             const possiblePath = path.join(windsurfExtPath, pluginDir, 'out', 'mcpServerStandalone.js');
@@ -3224,7 +3244,7 @@ ipcMain.handle('clear-plugin-activation-cache', async () => {
       const extensions = fs.readdirSync(globalStoragePath);
       for (const ext of extensions) {
         // 只清除我们插件相关的存储
-        if (ext.includes('windsurf-continue-pro') || ext.includes('ask-continue')) {
+        if (isOurPlugin(ext)) {
           const extPath = path.join(globalStoragePath, ext);
           const delResult = await removePathWithRetries(extPath, { isDir: true });
           if (delResult.removed) {
@@ -3263,7 +3283,7 @@ ipcMain.handle('clear-plugin-activation-cache', async () => {
     if (fs.existsSync(cachedExtPath)) {
       const files = fs.readdirSync(cachedExtPath);
       for (const file of files) {
-        if (file.includes('windsurf-continue-pro') || file.includes('ask-continue')) {
+        if (isOurPlugin(file)) {
           const filePath = path.join(cachedExtPath, file);
           const delResult = await removePathWithRetries(filePath, { isDir: false });
           if (delResult.removed) {
@@ -3282,7 +3302,7 @@ ipcMain.handle('clear-plugin-activation-cache', async () => {
     if (fs.existsSync(extensionsPath)) {
       const extensions = fs.readdirSync(extensionsPath);
       const pluginVersions = extensions
-        .filter(ext => ext.includes('windsurf-continue-pro') || ext.includes('ask-continue'))
+        .filter(ext => isOurPlugin(ext))
         .map(ext => ({ name: ext, fullPath: path.join(extensionsPath, ext), version: extractVersionFromDirName(ext) }));
 
       // 如果有多个版本，只保留最新的（按版本号比较，无法解析版本的排在最前）
