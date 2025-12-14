@@ -2615,6 +2615,39 @@ ipcMain.handle('activate-plugin', async () => {
   }
 });
 
+// 同步卡密到插件（静默模式，不重启 Windsurf）
+ipcMain.handle('sync-key-to-plugin', async () => {
+  try {
+    // 检查是否有激活码
+    if (!keyManager.hasKey()) {
+      return { success: false, message: '未设置卡密' };
+    }
+    
+    // 获取当前激活码
+    const activationKey = keyManager.getKey();
+    
+    // 将激活码写入 Windsurf 用户数据目录下的共享文件
+    const sharedKeyPath = path.join(windsurfUserDataPath, 'windsurf-pro-key.json');
+    const keyData = {
+      secretKey: activationKey,
+      syncedAt: new Date().toISOString(),
+      syncedBy: 'client-tool-auto'
+    };
+    
+    fs.writeFileSync(sharedKeyPath, JSON.stringify(keyData, null, 2), 'utf-8');
+    console.log('✅ 卡密已静默同步到插件:', sharedKeyPath);
+    
+    return { 
+      success: true, 
+      message: '卡密已同步到插件',
+      data: { sharedKeyPath }
+    };
+  } catch (error) {
+    console.error('同步卡密到插件失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // 清除 Windsurf 缓存
 ipcMain.handle('clear-windsurf-cache', async () => {
   try {

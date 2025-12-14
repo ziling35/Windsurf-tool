@@ -575,6 +575,9 @@ async function saveKey() {
       log('✅ 秘钥已保存', 'success');
       // 立即查询秘钥状态
       await checkKeyStatus();
+      
+      // 自动同步卡密到插件
+      await syncKeyToPlugin();
     } else {
       showToast(`保存失败: ${result.message}`, 'error');
       log(`❌ 保存失败: ${result.message}`, 'error');
@@ -586,6 +589,27 @@ async function saveKey() {
     btn.disabled = false;
     btn.innerHTML = originalHTML;
     try { lucide.createIcons(); } catch (e) {}
+  }
+}
+
+// 同步卡密到插件（静默模式，不重启 Windsurf）
+async function syncKeyToPlugin() {
+  try {
+    log('🔄 正在同步卡密到插件...', 'info');
+    
+    // 调用后端同步卡密到插件（静默模式）
+    const result = await window.electronAPI.syncKeyToPlugin();
+    
+    if (result.success) {
+      log('✅ 卡密已同步到插件', 'success');
+      showToast('卡密已同步到插件', 'success', 2000);
+    } else {
+      // 同步失败不影响主流程，只记录日志
+      log(`⚠️ 插件同步: ${result.message}`, 'warning');
+    }
+  } catch (error) {
+    // 同步失败不影响主流程
+    log(`⚠️ 插件同步失败: ${error.message}`, 'warning');
   }
 }
 

@@ -124,6 +124,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 激活插件
   activatePlugin: () => ipcRenderer.invoke('activate-plugin'),
   
+  // 同步卡密到插件（静默模式，不重启 Windsurf）
+  syncKeyToPlugin: () => ipcRenderer.invoke('sync-key-to-plugin'),
+  
   // 配置 MCP
   configureMCP: () => ipcRenderer.invoke('configure-mcp'),
   
