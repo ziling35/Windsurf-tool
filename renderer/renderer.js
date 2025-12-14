@@ -267,15 +267,6 @@ async function installAIRulesToWorkspace() {
   const workspacePath = validateWorkspacePath();
   if (!workspacePath) return;
   
-  const btn = document.getElementById('install-ai-rules-to-workspace-btn');
-  if (!btn) return;
-  
-  const originalHtml = btn.innerHTML;
-  
-  btn.disabled = true;
-  btn.innerHTML = '<i data-lucide="loader"></i><span>安装中...</span>';
-  try { lucide.createIcons(); } catch (e) {}
-  
   log('开始安装 AI 规则到工作目录...', 'info');
   log(`📁 目标目录: ${workspacePath}`, 'info');
   showToast('正在安装 AI 规则...', 'info');
@@ -303,10 +294,6 @@ async function installAIRulesToWorkspace() {
   } catch (error) {
     showToast(`安装失败: ${error.message}`, 'error');
     log(`❌ 安装失败: ${error.message}`, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-    try { lucide.createIcons(); } catch (e) {}
   }
 }
 
@@ -984,12 +971,41 @@ function bindServerHistoryItemEvents() {
   });
 }
 
+// 检查插件是否安装（切换账号前调用）
+async function checkPluginInstalledForSwitch() {
+  try {
+    const pluginResult = await window.electronAPI.checkPluginStatus();
+    if (pluginResult.success && pluginResult.data && pluginResult.data.pluginInstalled) {
+      return true; // 插件已安装，允许切换
+    }
+    
+    // 插件未安装，弹窗提醒
+    await showModal(
+      '需要安装插件',
+      '切换账号功能需要先安装插件。\n\n请前往【插件管理】页面安装插件后再使用切换账号功能。',
+      { showCancel: false, confirmText: '我知道了' }
+    );
+    log('⚠️ 插件未安装，禁止切换账号', 'warning');
+    return false; // 禁止切换
+  } catch (e) {
+    console.error('检查插件状态失败:', e);
+    showToast('检查插件状态失败，请稍后再试', 'error');
+    return false;
+  }
+}
+
 // 切换到服务器账号
 async function switchToServerAccount(email, apiKey) {
   // 版本检查
   const canProceed = await checkClientVersion();
   if (!canProceed) {
     showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
+  // 插件安装检查
+  const pluginOk = await checkPluginInstalledForSwitch();
+  if (!pluginOk) {
     return;
   }
   
@@ -1041,6 +1057,12 @@ async function switchToHistoryAccount(id) {
   const canProceed = await checkClientVersion();
   if (!canProceed) {
     showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
+  // 插件安装检查
+  const pluginOk = await checkPluginInstalledForSwitch();
+  if (!pluginOk) {
     return;
   }
   
@@ -1544,6 +1566,12 @@ async function oneClickSwitch() {
     return; // 版本过低，阻止操作
   }
   
+  // 插件安装检查
+  const pluginOk = await checkPluginInstalledForSwitch();
+  if (!pluginOk) {
+    return;
+  }
+  
   const btn = document.getElementById('one-click-switch-btn');
   let originalHTML = '';
   if (btn) {
@@ -1899,7 +1927,7 @@ function createPluginCard(plugin) {
     </div>
 
     ${featuresHtml ? `
-    <div class="info-section collapsible-section">
+    <div class="info-section collapsible-section collapsed">
       <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
         <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
           <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
@@ -1910,6 +1938,29 @@ function createPluginCard(plugin) {
         <ul style="margin: 10px 0 0 0; padding-left: 20px; color: #6b7280; line-height: 1.8;">
           ${featuresHtml}
         </ul>
+      </div>
+    </div>
+    ` : ''}
+
+    ${stepsHtml || tipsHtml ? `
+    <!-- 使用说明（可折叠） -->
+    <div class="info-section collapsible-section collapsed" style="margin-top: 10px;">
+      <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+        <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+          <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
+          使用说明
+        </h4>
+      </div>
+      <div class="collapsible-content">
+        <div style="color: #6b7280; line-height: 1.8; margin-top: 10px;">
+          ${stepsHtml ? `
+          <ol style="padding-left: 20px; margin: 0;">
+            ${stepsHtml}
+          </ol>
+          <p style="margin-top: 10px; font-size: 0.9em; color: #9ca3af;">💡 如需单独操作，可点击"更多操作"按钮</p>
+          ` : ''}
+          ${tipsHtml}
+        </div>
       </div>
     </div>
     ` : ''}
@@ -1960,12 +2011,8 @@ function createPluginCard(plugin) {
           <i data-lucide="folder"></i>
           <span>选择</span>
         </button>
-        <button id="install-ai-rules-to-workspace-btn" class="btn btn-primary btn-small" title="安装 AI 规则到此目录（生成 .windsurfrules 和 .ask_continue_port 文件）" onclick="installAIRulesToWorkspace()">
-          <i data-lucide="file-plus"></i>
-          <span>安装AI规则</span>
-        </button>
       </div>
-      <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，点击"安装AI规则"生成 .windsurfrules 和 .ask_continue_port 文件</small>
+      <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，在"更多操作"中点击"安装 AI 规则"</small>
     </div>
     ` : ''}
 
@@ -2000,8 +2047,8 @@ function createPluginCard(plugin) {
             <i data-lucide="settings"></i>
             <span>配置 MCP</span>
           </button>
-          <button class="dropdown-item" id="install-rules-btn" title="安装AI规则" onclick="installAIRules(); closeMoreActionsMenu();">
-            <i data-lucide="file-text"></i>
+          <button class="dropdown-item" id="install-rules-btn" title="安装AI规则到工作目录" onclick="installAIRulesToWorkspace(); closeMoreActionsMenu();">
+            <i data-lucide="file-plus"></i>
             <span>安装 AI 规则</span>
           </button>
           <div style="border-top: 1px solid #e5e7eb; margin: 4px 0;"></div>
@@ -2020,29 +2067,6 @@ function createPluginCard(plugin) {
       </button>
       `}
     </div>
-
-    ${stepsHtml || tipsHtml ? `
-    <!-- 使用说明（可折叠） -->
-    <div class="info-section collapsible-section" style="margin-top: 20px;">
-      <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
-        <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
-          <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
-          使用说明
-        </h4>
-      </div>
-      <div class="collapsible-content">
-        <div style="color: #6b7280; line-height: 1.8; margin-top: 10px;">
-          ${stepsHtml ? `
-          <ol style="padding-left: 20px; margin: 0;">
-            ${stepsHtml}
-          </ol>
-          <p style="margin-top: 10px; font-size: 0.9em; color: #9ca3af;">💡 如需单独操作，可点击"更多操作"按钮</p>
-          ` : ''}
-          ${tipsHtml}
-        </div>
-      </div>
-    </div>
-    ` : ''}
   `;
   
   return card;

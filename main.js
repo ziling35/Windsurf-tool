@@ -29,26 +29,22 @@ const fs = require('fs');
    
    const lowerName = name.toLowerCase();
    
-   // 精确匹配我们的插件名称
+   // 严格匹配：只匹配带有正确发布者前缀的插件名称
+   // 避免误删其他插件
    const exactMatches = [
      'papercrane-team.windsurf-continue-pro',
-     'undefined_publisher.windsurf-continue-pro',
-     'windsurf-continue-pro',
-     'papercrane.windsurf-continue-pro',
-     'ask-continue'
+     'undefined_publisher.windsurf-continue-pro'
    ];
    
    if (exactMatches.includes(lowerName)) {
      return true;
    }
    
-   // 前缀匹配（带版本号的目录）
+   // 前缀匹配（带版本号的目录，如 papercrane-team.windsurf-continue-pro-1.0.0）
+   // 只匹配有明确发布者前缀的目录
    const prefixMatches = [
      'papercrane-team.windsurf-continue-pro-',
-     'undefined_publisher.windsurf-continue-pro-',
-     'papercrane.windsurf-continue-pro-',
-     'windsurf-continue-pro-',
-     'ask-continue-'
+     'undefined_publisher.windsurf-continue-pro-'
    ];
    
    return prefixMatches.some(prefix => lowerName.startsWith(prefix));
@@ -1716,7 +1712,8 @@ ipcMain.handle('install-plugin', async (event) => {
             if (fs.existsSync(wsStateFile)) {
               try {
                 const content = fs.readFileSync(wsStateFile, 'utf-8');
-                if (content.includes('windsurf-continue-pro') || content.includes('ask-continue') || content.includes('papercrane-team') || content.includes('undefined_publisher')) {
+                // 严格匹配：只匹配带有完整发布者前缀的插件ID
+                if (content.includes('papercrane-team.windsurf-continue-pro') || content.includes('undefined_publisher.windsurf-continue-pro')) {
                   console.log(`[安装插件] 清除工作区状态: ${workspace}`);
                   const delResult = await removePathWithRetries(wsPath, { isDir: true, maxRetries: 5 });
                   if (delResult.removed) {
@@ -1801,12 +1798,18 @@ ipcMain.handle('install-plugin', async (event) => {
       sendProgress('version', '⏳ 检查插件版本...');
       const pluginInfo = await KeyManager.checkPluginUpdate('windsurf-continue-pro', '0.0.0');
       if (pluginInfo.success && pluginInfo.data) {
-        latestVersion = pluginInfo.data.latest_version || '1.0.0';
-        downloadUrl = pluginInfo.data.download_url;
-        console.log('[安装插件] ✅ 服务器最新版本:', latestVersion);
-        console.log('[安装插件] ✅ 下载地址:', downloadUrl);
+        const serverVersion = pluginInfo.data.latest_version;
+        // 服务器返回有效版本且不是 0.0.0 时使用服务器版本
+        if (serverVersion && serverVersion !== '0.0.0') {
+          latestVersion = serverVersion;
+          downloadUrl = pluginInfo.data.download_url;
+          console.log('[安装插件] ✅ 服务器最新版本:', latestVersion);
+          console.log('[安装插件] ✅ 下载地址:', downloadUrl);
+        } else {
+          console.warn('[安装插件] ⚠️ 服务器返回版本无效 (0.0.0)，使用默认版本 1.0.0');
+        }
       } else {
-        console.warn('[安装插件] ⚠️ 服务器未返回插件信息，使用默认版本');
+        console.warn('[安装插件] ⚠️ 服务器未返回插件信息，使用默认版本 1.0.0');
       }
     } catch (err) {
       console.warn('[安装插件] ⚠️ 获取服务器插件信息失败:', err.message);
@@ -1966,13 +1969,42 @@ ipcMain.handle('install-plugin', async (event) => {
       console.log('[安装插件] 使用 CLI 安装:', cliPath);
       console.log('[安装插件] VSIX 路径:', vsixPath);
       
+      // 检查路径是否包含非 ASCII 字符（如中文），如果是则复制到安全路径
+      // 这是为了解决 Windsurf CLI 的 V8 引擎无法处理非 ASCII 路径的问题
+      let safeVsixPath = vsixPath;
+      const hasNonAscii = /[^\x00-\x7F]/.test(vsixPath);
+      if (hasNonAscii) {
+        console.log('[安装插件] ⚠️ 检测到路径包含非 ASCII 字符，复制到安全路径...');
+        event.sender.send('switch-progress', { 
+          step: 'info', 
+          message: `[${currentStep}/${TOTAL_STEPS}] ⏳ 处理特殊字符路径...` 
+        });
+        
+        // 使用 Windows 系统临时目录（通常是 C:\Windows\Temp 或不含中文的路径）
+        const os = require('os');
+        const safeTempDir = 'C:\\Windows\\Temp';
+        const fallbackTempDir = os.tmpdir();
+        const tempDir = fs.existsSync(safeTempDir) ? safeTempDir : fallbackTempDir;
+        const safeFileName = 'windsurf-plugin-install.vsix';
+        safeVsixPath = path.join(tempDir, safeFileName);
+        
+        try {
+          fs.copyFileSync(vsixPath, safeVsixPath);
+          console.log('[安装插件] ✅ 已复制到安全路径:', safeVsixPath);
+        } catch (copyError) {
+          console.error('[安装插件] ❌ 复制失败:', copyError);
+          // 如果复制失败，仍然尝试使用原路径
+          safeVsixPath = vsixPath;
+        }
+      }
+      
       try {
         console.log('[安装插件] ========== 开始 CLI 安装 ==========');
         console.log('[安装插件] CLI 路径:', cliPath);
-        console.log('[安装插件] VSIX 路径:', vsixPath);
+        console.log('[安装插件] VSIX 路径:', safeVsixPath);
         console.log('[安装插件] 扩展目录:', extensionsPath);
         
-        const { stdout, stderr } = await execFileAsync(cliPath, ['--install-extension', vsixPath, '--force'], {
+        const { stdout, stderr } = await execFileAsync(cliPath, ['--install-extension', safeVsixPath, '--force'], {
           timeout: 120000, // 2分钟超时
           windowsHide: true
         });
@@ -2030,7 +2062,7 @@ foreach ($pluginId in $pluginIds) {
 
 Write-Host "正在安装 Windsurf Continue Pro..." -ForegroundColor Yellow
 try {
-    & "${cliPath}" --install-extension "${vsixPath}" --force
+    & "${cliPath}" --install-extension "${safeVsixPath}" --force
     Write-Host "✓ 插件安装成功！" -ForegroundColor Green
     Write-Host ""
     Write-Host "请重新打开 Windsurf 使插件生效。" -ForegroundColor Cyan
@@ -2089,8 +2121,8 @@ Remove-Item -Path "$PSCommandPath" -Force -ErrorAction SilentlyContinue
         console.log('[安装插件] 扩展目录中的所有文件/目录 (共 ' + allExtensions.length + ' 个):');
         allExtensions.forEach(ext => console.log('  - ' + ext));
         
-        // 查找包含 windsurf-continue-pro 或 ask-continue 的目录
-        console.log('[安装插件] 查找包含 "windsurf-continue-pro" 或 "ask-continue" 的目录...');
+        // 查找我们的插件目录
+        console.log('[安装插件] 查找我们的插件目录...');
         const matchedDirs = allExtensions.filter(dir => isOurPlugin(dir));
         
         console.log('[安装插件] 匹配的插件目录 (共 ' + matchedDirs.length + ' 个):', matchedDirs);
@@ -2381,7 +2413,30 @@ ipcMain.handle('update-plugin', async (event, { targetVersion, downloadUrl }) =>
       console.log('[更新插件] 使用 CLI 安装:', cliPath);
       console.log('[更新插件] VSIX 路径:', downloadedPath);
       
-      const { stdout, stderr } = await execFileAsync(cliPath, ['--install-extension', downloadedPath, '--force'], {
+      // 检查路径是否包含非 ASCII 字符（如中文），如果是则复制到安全路径
+      let safeDownloadedPath = downloadedPath;
+      const hasNonAscii = /[^\x00-\x7F]/.test(downloadedPath);
+      if (hasNonAscii) {
+        console.log('[更新插件] ⚠️ 检测到路径包含非 ASCII 字符，复制到安全路径...');
+        event.sender.send('switch-progress', { step: 'info', message: '⏳ 处理特殊字符路径...' });
+        
+        const os = require('os');
+        const safeTempDir = 'C:\\Windows\\Temp';
+        const fallbackTempDir = os.tmpdir();
+        const tempDir = fs.existsSync(safeTempDir) ? safeTempDir : fallbackTempDir;
+        const safeFileName = 'windsurf-plugin-update.vsix';
+        safeDownloadedPath = path.join(tempDir, safeFileName);
+        
+        try {
+          fs.copyFileSync(downloadedPath, safeDownloadedPath);
+          console.log('[更新插件] ✅ 已复制到安全路径:', safeDownloadedPath);
+        } catch (copyError) {
+          console.error('[更新插件] ❌ 复制失败:', copyError);
+          safeDownloadedPath = downloadedPath;
+        }
+      }
+      
+      const { stdout, stderr } = await execFileAsync(cliPath, ['--install-extension', safeDownloadedPath, '--force'], {
         timeout: 120000,
         windowsHide: true
       });

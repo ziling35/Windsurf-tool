@@ -350,7 +350,7 @@
             </div>
           </div>
 
-          <div class="info-section collapsible-section">
+          <div class="info-section collapsible-section collapsed">
             <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
               <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
                 <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
@@ -364,6 +364,33 @@
                 <li><strong>AI 持续对话</strong>：在同一对话中继续，不消耗新 credits</li>
                 <li><strong>专业界面</strong>：Windows 原生 GUI 对话框</li>
               </ul>
+            </div>
+          </div>
+
+          <!-- 使用说明（可折叠） -->
+          <div class="info-section collapsible-section collapsed" style="margin-top: 10px;">
+            <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
+              <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
+                <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
+                使用说明
+              </h4>
+            </div>
+            <div class="collapsible-content">
+              <div style="color: #6b7280; line-height: 1.8; margin-top: 10px;">
+                <ol style="padding-left: 20px; margin: 0;">
+                  <li><strong>一键安装</strong>：点击"一键安装"按钮，自动完成安装、激活、配置 MCP、安装规则并重启 Windsurf</li>
+                  <li><strong>开始使用</strong>：在 Windsurf 中正常使用 Cascade，AI 结束时会自动弹出对话框</li>
+                </ol>
+                <p style="margin-top: 10px; font-size: 0.9em; color: #9ca3af;">💡 如需单独操作，可点击"更多操作"按钮</p>
+                <div style="margin-top: 15px; padding: 12px; background: #d1fae5; border-left: 3px solid #10b981; border-radius: 6px;">
+                  <strong style="color: #065f46;">✨ 激活码自动同步</strong>
+                  <p style="margin: 8px 0 0 0; color: #065f46;">客户端和插件共享激活码，一次激活全部搞定！插件启动时会自动读取客户端的激活状态，无需重复输入卡密。</p>
+                </div>
+                <div style="margin-top: 12px; padding: 12px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
+                  <strong style="color: #92400e;">💡 工作原理</strong>
+                  <p style="margin: 8px 0 0 0; color: #92400e;">插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续，不会消耗额外的 credits。这才是真正的"永不停止"！</p>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -416,7 +443,7 @@
                 <span>选择</span>
               </button>
             </div>
-            <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，留空则使用主页设置的工作目录</small>
+            <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，在"更多操作"中点击"安装 AI 规则"</small>
           </div>
 
           <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
@@ -443,8 +470,8 @@
                   <i data-lucide="settings"></i>
                   <span>配置 MCP</span>
                 </button>
-                <button class="dropdown-item" id="install-rules-btn" title="安装AI规则" onclick="installAIRules(); closeMoreActionsMenu();">
-                  <i data-lucide="file-text"></i>
+                <button class="dropdown-item" id="install-rules-btn" title="安装AI规则到工作目录" onclick="installAIRulesToWorkspace(); closeMoreActionsMenu();">
+                  <i data-lucide="file-plus"></i>
                   <span>安装 AI 规则</span>
                 </button>
                 <div style="border-top: 1px solid #e5e7eb; margin: 4px 0;"></div>
@@ -497,33 +524,6 @@
                 <i data-lucide="settings"></i>
                 <span>配置 Kiro MCP</span>
               </button>
-            </div>
-          </div>
-          
-          <!-- 使用说明（可折叠） -->
-          <div class="info-section collapsible-section" style="margin-top: 20px;">
-            <div class="collapsible-header" onclick="this.parentElement.classList.toggle('collapsed')">
-              <h4 style="margin: 0; font-size: 0.95em; color: #374151; display: flex; align-items: center; gap: 8px;">
-                <i data-lucide="chevron-down" class="collapse-icon" style="width: 16px; height: 16px; transition: transform 0.2s;"></i>
-                使用说明
-              </h4>
-            </div>
-            <div class="collapsible-content">
-              <div style="color: #6b7280; line-height: 1.8; margin-top: 10px;">
-                <ol style="padding-left: 20px; margin: 0;">
-                  <li><strong>一键安装</strong>：点击"一键安装"按钮，自动完成安装、激活、配置 MCP、安装规则并重启 Windsurf</li>
-                  <li><strong>开始使用</strong>：在 Windsurf 中正常使用 Cascade，AI 结束时会自动弹出对话框</li>
-                </ol>
-                <p style="margin-top: 10px; font-size: 0.9em; color: #9ca3af;">💡 如需单独操作，可点击"更多操作"按钮</p>
-                <div style="margin-top: 15px; padding: 12px; background: #d1fae5; border-left: 3px solid #10b981; border-radius: 6px;">
-                  <strong style="color: #065f46;">✨ 激活码自动同步</strong>
-                  <p style="margin: 8px 0 0 0; color: #065f46;">客户端和插件共享激活码，一次激活全部搞定！插件启动时会自动读取客户端的激活状态，无需重复输入卡密。</p>
-                </div>
-                <div style="margin-top: 12px; padding: 12px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
-                  <strong style="color: #92400e;">💡 工作原理</strong>
-                  <p style="margin: 8px 0 0 0; color: #92400e;">插件通过 MCP 机制拦截 AI 的结束行为，让 AI 在同一对话中继续，不会消耗额外的 credits。这才是真正的"永不停止"！</p>
-                </div>
-              </div>
             </div>
           </div>
         </div>
