@@ -1823,6 +1823,25 @@ async function loadPluginList() {
         aiRulesPathInput.addEventListener('dragover', (e) => e.preventDefault());
       }
       
+      // 绑定选择按钮的点击事件（动态生成的按钮需要在渲染后绑定）
+      const selectAiRulesPathBtn = document.getElementById('select-ai-rules-path-btn');
+      if (selectAiRulesPathBtn) {
+        selectAiRulesPathBtn.addEventListener('click', async () => {
+          try {
+            const result = await window.electronAPI.selectFolder();
+            if (result.success && result.path) {
+              const input = document.getElementById('ai-rules-path');
+              input.value = result.path;
+              // 触发自动保存
+              input.dispatchEvent(new Event('change'));
+              log(`选择了项目工作目录: ${result.path}`, 'info');
+            }
+          } catch (error) {
+            showToast(`选择目录失败: ${error.message}`, 'error');
+          }
+        });
+      }
+      
       // 检测所有 Windsurf 插件的状态
       cachedPluginList.forEach(plugin => {
         if (plugin.ide_type === 'windsurf') {
