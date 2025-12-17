@@ -141,6 +141,43 @@ class AccountHistoryManager {
   }
 
   /**
+   * 根据邮箱标记/取消标记账号
+   * @param {string} email 账号邮箱
+   * @param {boolean} marked 是否标记
+   * @returns {boolean} 是否成功
+   */
+  markAccountByEmail(email, marked = true) {
+    const accountIndex = this.history.accounts.findIndex(acc => acc.email === email);
+    
+    if (accountIndex === -1) {
+      // 如果账号不存在，创建一个只包含标记信息的记录
+      const accountData = {
+        id: uuidv4(),
+        email: email,
+        marked: marked,
+        markedAt: new Date().toISOString()
+      };
+      this.history.accounts.unshift(accountData);
+    } else {
+      this.history.accounts[accountIndex].marked = marked;
+      this.history.accounts[accountIndex].markedAt = new Date().toISOString();
+    }
+    
+    this.saveHistory();
+    return true;
+  }
+
+  /**
+   * 检查账号是否已标记（根据邮箱）
+   * @param {string} email 账号邮箱
+   * @returns {boolean} 是否已标记
+   */
+  isMarkedByEmail(email) {
+    const account = this.history.accounts.find(acc => acc.email === email);
+    return account ? (account.marked || false) : false;
+  }
+
+  /**
    * 删除账号
    * @param {string} id 账号 ID
    * @returns {boolean} 是否成功

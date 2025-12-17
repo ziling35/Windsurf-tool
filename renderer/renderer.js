@@ -221,44 +221,26 @@ function showModal(title, message) {
 }
 
 // 验证项目工作目录是否已设置（必填）
-// 如果未设置，显示弹窗提醒并高亮输入框
 // 返回工作目录路径（如果有效）或 null（如果无效）
 function validateWorkspacePath(showAlert = true) {
-  const aiRulesPathInput = document.getElementById('ai-rules-path');
-  const aiRulesPath = aiRulesPathInput ? aiRulesPathInput.value.trim() : '';
-  
-  // 如果插件管理页面的工作目录为空，尝试使用主页的工作目录
-  let workspacePath = aiRulesPath;
-  if (!workspacePath) {
-    const mainWorkspaceInput = document.getElementById('workspace-path-input');
-    workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
-  }
-  
+  // 使用主页隐藏的 "工作区路径" 输入框（其值来自后端配置）
+  const mainWorkspaceInput = document.getElementById('workspace-path-input');
+  const workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
+
   if (!workspacePath) {
     if (showAlert) {
-      log('❌ 未设置项目工作目录', 'error');
-      showToast('请先设置项目工作目录！这是必填项。', 'error', 5000);
-      
-      // 高亮显示工作目录输入框
-      if (aiRulesPathInput) {
-        aiRulesPathInput.style.borderColor = '#ef4444';
-        aiRulesPathInput.style.boxShadow = '0 0 0 3px rgba(239, 68, 68, 0.2)';
-        aiRulesPathInput.focus();
-        setTimeout(() => {
-          aiRulesPathInput.style.borderColor = '';
-          aiRulesPathInput.style.boxShadow = '';
-        }, 3000);
-      }
-      
-      // 显示弹窗提醒
+      log('❌ 未设置工作区路径', 'error');
+      showToast('请先设置工作区路径！这是必填项。', 'error', 5000);
+
+      // 显示弹窗提醒（不再引用具体输入框）
       showModal(
-        '请设置项目工作目录',
-        '项目工作目录是必填项！\n\n请在"项目工作目录"输入框中选择或输入您的项目路径。\n\nAI 规则文件将安装到此目录中。'
+        '请设置工作区路径',
+        '工作区路径是必填项！\n\n请在客户端中完成工作区路径配置，或通过其他自动化方式设置。\n\nAI 规则文件将安装到该工作区目录中。'
       );
     }
     return null;
   }
-  
+
   return workspacePath;
 }
 
@@ -914,9 +896,18 @@ async function loadAccountHistory() {
     }
     
     // 渲染账号列表（从服务器获取的账号）
-    accounts.forEach((account, index) => {
+    for (const account of accounts) {
       const item = document.createElement('div');
       item.className = 'history-item';
+      
+      // 检查标记状态
+      const markResult = await window.electronAPI.isMarkedByEmail(account.email);
+      const isMarked = markResult.success ? markResult.marked : false;
+      
+      if (isMarked) {
+        item.classList.add('marked');
+      }
+      
       item.innerHTML = `
         <div class="history-info">
           <div class="history-email">${account.email}</div>
@@ -926,9 +917,13 @@ async function loadAccountHistory() {
           <div class="history-meta">
             ${account.name ? `<span>名称: ${account.name}</span>` : ''}
             ${account.assigned_at ? `<span>获取时间: ${formatTime(account.assigned_at)}</span>` : ''}
+            ${isMarked ? '<span style="color: #2f855a;">✓ 已标记</span>' : ''}
           </div>
         </div>
         <div class="history-actions">
+          <button class="history-btn mark-btn ${isMarked ? 'marked' : ''}" title="${isMarked ? '取消标记' : '标记为已使用'}" data-email="${account.email}" data-marked="${isMarked}">
+            <i data-lucide="${isMarked ? 'check-circle' : 'circle'}"></i>
+          </button>
           <button class="history-btn copy-btn" title="复制账号密码" data-email="${account.email}" data-password="${account.password}">
             <i data-lucide="copy"></i>
           </button>
@@ -939,7 +934,7 @@ async function loadAccountHistory() {
       `;
       
       historyList.appendChild(item);
-    });
+    }
     
     // 重新渲染图标
     lucide.createIcons();
@@ -962,6 +957,25 @@ async function loadAccountHistory() {
 
 // 绑定服务器账号历史列表事件
 function bindServerHistoryItemEvents() {
+  // 标记按钮
+  document.querySelectorAll('.history-btn.mark-btn').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const email = btn.getAttribute('data-email');
+      const isMarked = btn.getAttribute('data-marked') === 'true';
+      
+      // 切换标记状态
+      const result = await window.electronAPI.markAccountByEmail(email, !isMarked);
+      
+      if (result.success) {
+        showToast(result.message, 'success');
+        // 刷新列表以显示更新后的状态
+        await loadAccountHistory();
+      } else {
+        showToast(`操作失败: ${result.message}`, 'error');
+      }
+    });
+  });
+  
   // 复制按钮
   document.querySelectorAll('.history-btn.copy-btn').forEach(btn => {
     btn.addEventListener('click', async () => {
@@ -2034,31 +2048,9 @@ function createPluginCard(plugin) {
         <div id="plugin-update-info-${pluginId}" style="display: none; margin-top: 10px; padding: 10px; background: #fef3c7; border-left: 3px solid #f59e0b; border-radius: 6px;">
           <strong style="color: #92400e;" id="plugin-update-title-${pluginId}">检测中...</strong>
           <p style="margin: 5px 0 0 0; color: #92400e; font-size: 0.9em;" id="plugin-update-desc-${pluginId}"></p>
-          <!-- <button id="update-plugin-btn-${pluginId}" class="btn btn-warning" style="margin-top: 10px; padding: 6px 12px; font-size: 0.85em;" onclick="updatePluginByName('${plugin.name}')">
-            <i data-lucide="download-cloud"></i>
-            <span>立即更新</span>
-          </button> -->
         </div>
       </div>
     </div>
-
-    ${!isKiro ? `
-    <!-- 工作目录配置 -->
-    <div class="info-section" style="margin-top: 20px;">
-      <label style="display: block; margin-bottom: 6px; font-size: 0.9em; color: #374151; font-weight: 500;">
-        项目工作目录 <span style="color: #ef4444; font-weight: 600;">*</span>
-      </label>
-      <div class="key-input-row">
-        <input type="text" id="ai-rules-path" class="key-input auto-save" data-config-key="aiRulesPath" placeholder="请选择项目工作目录（必填）" style="flex: 1;" required />
-        <button id="select-ai-rules-path-btn" class="btn btn-secondary btn-small" title="选择项目工作目录">
-          <i data-lucide="folder"></i>
-          <span>选择</span>
-        </button>
-      </div>
-      <small style="display: block; margin-top: 4px; color: #ef4444; font-size: 0.75em;">AI 规则将安装到此目录，在"更多操作"中点击"安装 AI 规则"</small>
-    </div>
-    ` : ''}
-
     <div style="margin-top: 20px; display: flex; gap: 10px; flex-wrap: wrap; align-items: center;">
       ${isKiro ? `
       <button id="install-kiro-plugin-btn" class="btn btn-secondary" style="flex: 1; min-width: 140px;" title="安装插件到 Kiro IDE" onclick="installPluginToKiro()">
@@ -2448,38 +2440,11 @@ async function installPlugin(forceInstall = false) {
     return;
   }
   
-  // 验证工作目录是否已设置（必填）
-  const aiRulesPathInput = document.getElementById('ai-rules-path');
-  const aiRulesPath = aiRulesPathInput ? aiRulesPathInput.value.trim() : '';
-  
-  // 如果插件管理页面的工作目录为空，尝试使用主页的工作目录
-  let workspacePath = aiRulesPath;
-  if (!workspacePath) {
-    const mainWorkspaceInput = document.getElementById('workspace-path-input');
-    workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
-  }
-  
-  if (!workspacePath) {
-    log('❌ 未设置项目工作目录，无法安装插件', 'error');
-    showToast('请先设置项目工作目录！这是必填项。', 'error', 5000);
-    
-    // 高亮显示工作目录输入框
-    if (aiRulesPathInput) {
-      aiRulesPathInput.style.borderColor = '#ef4444';
-      aiRulesPathInput.style.boxShadow = '0 0 0 3px rgba(239, 68, 68, 0.2)';
-      aiRulesPathInput.focus();
-      setTimeout(() => {
-        aiRulesPathInput.style.borderColor = '';
-        aiRulesPathInput.style.boxShadow = '';
-      }, 3000);
-    }
-    
-    // 显示弹窗提醒
-    showModal(
-      '请设置项目工作目录',
-      '项目工作目录是必填项！\n\n请在"项目工作目录"输入框中选择或输入您的项目路径。\n\n设置工作目录后才能执行安装或重新安装操作。'
-    );
-    return;
+  // 可选：记录当前已配置的工作区路径（如果有）
+  const mainWorkspaceInput = document.getElementById('workspace-path-input');
+  const workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
+  if (workspacePath) {
+    log(`📁 工作目录: ${workspacePath}`, 'info');
   }
   
   const originalHtml = btn.innerHTML;
@@ -2496,7 +2461,6 @@ async function installPlugin(forceInstall = false) {
   updateBtnStatus(isReinstall ? '重新安装中...' : '安装中...');
   
   log(`🚀 开始${isReinstall ? '重新安装' : '一键安装'}流程...`, 'info');
-  log(`📁 工作目录: ${workspacePath}`, 'info');
   showToast(`正在执行${isReinstall ? '重新安装' : '一键安装'}，请稍候...`, 'info');
   
   try {
@@ -2612,8 +2576,12 @@ async function installPlugin(forceInstall = false) {
 
 // 激活插件
 async function activatePlugin() {
-  // 验证项目工作目录是否已设置
-  if (!validateWorkspacePath()) return;
+  // 可选：记录当前已配置的工作区路径（如果有）
+  const mainWorkspaceInput = document.getElementById('workspace-path-input');
+  const workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
+  if (workspacePath) {
+    log(`📁 工作目录: ${workspacePath}`, 'info');
+  }
   
   const btn = document.getElementById('activate-plugin-btn');
   if (!btn) return;
@@ -2824,165 +2792,8 @@ async function clearWindsurfGlobalData() {
   }
 }
 
-// 配置 MCP
-async function configureMCP() {
-  // 验证项目工作目录是否已设置
-  if (!validateWorkspacePath()) return;
-  
-  const btn = document.getElementById('configure-mcp-btn');
-  if (!btn) return;
-  
-  const originalHtml = btn.innerHTML;
-  
-  btn.disabled = true;
-  btn.innerHTML = '<i data-lucide="loader"></i><span>配置中...</span>';
-  try { lucide.createIcons(); } catch (e) {}
-  
-  log('开始配置 MCP...', 'info');
-  showToast('正在配置 MCP，请稍候...', 'info');
-  
-  try {
-    const result = await window.electronAPI.configureMCP();
-    
-    if (result.success) {
-      showToast(result.message, 'success');
-      log(`✅ ${result.message}`, 'success');
-      
-      // 刷新状态
-      setTimeout(() => {
-        if (cachedPluginList) {
-          cachedPluginList.forEach(plugin => {
-            if (plugin.ide_type === 'windsurf') {
-              const pluginId = plugin.name.replace(/-/g, '_');
-              checkPluginStatus(pluginId);
-            }
-          });
-        } else {
-          checkPluginStatus();
-        }
-      }, 500);
-      
-      // 提示用户重启
-      setTimeout(async () => {
-        const confirmed = await showModal(
-          '配置成功',
-          'MCP 配置已完成！\n\n请重启 Windsurf 使插件生效。\n\n是否现在重启 Windsurf？'
-        );
-        
-        if (confirmed) {
-          log('用户确认重启 Windsurf', 'info');
-          const killResult = await window.electronAPI.killWindsurf();
-          if (killResult.success) {
-            showToast('Windsurf 已关闭，请手动重启', 'success');
-          }
-        }
-      }, 1000);
-    } else {
-      showToast(`配置失败: ${result.message}`, 'error');
-      log(`❌ 配置失败: ${result.message}`, 'error');
-    }
-  } catch (error) {
-    showToast(`配置失败: ${error.message}`, 'error');
-    log(`❌ 配置失败: ${error.message}`, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-    try { lucide.createIcons(); } catch (e) {}
-  }
-}
-
-// 重置 MCP 配置（修复路径乱码）
-async function resetMCPConfig() {
-  const btn = document.getElementById('reset-mcp-btn');
-  const originalHtml = btn.innerHTML;
-  
-  btn.disabled = true;
-  btn.innerHTML = '<i data-lucide="loader"></i><span>重置中...</span>';
-  try { lucide.createIcons(); } catch (e) {}
-  
-  log('开始重置 MCP 配置...', 'info');
-  showToast('正在重置 MCP 配置...', 'info');
-  
-  try {
-    const result = await window.electronAPI.resetMCPConfig();
-    
-    if (result.success) {
-      showToast(result.message, 'success');
-      log(`✅ ${result.message}`, 'success');
-      if (result.data) {
-        log(`  MCP 服务器: ${result.data.mcpServerPath}`, 'info');
-      }
-      
-      // 刷新状态
-      setTimeout(() => {
-        if (cachedPluginList) {
-          cachedPluginList.forEach(plugin => {
-            if (plugin.ide_type === 'windsurf') {
-              const pluginId = plugin.name.replace(/-/g, '_');
-              checkPluginStatus(pluginId);
-            }
-          });
-        } else {
-          checkPluginStatus();
-        }
-      }, 500);
-      
-      // 提示重启
-      setTimeout(async () => {
-        const restart = await showModal(
-          'MCP 配置已重置',
-          'MCP 配置已重置成功！\n\n请重启 Windsurf 使配置生效。\n\n是否现在关闭 Windsurf？'
-        );
-        
-        if (restart) {
-          const killResult = await window.electronAPI.killWindsurf();
-          if (killResult.success) {
-            showToast('Windsurf 已关闭，请手动重启', 'success');
-          }
-        }
-      }, 500);
-    } else {
-      showToast(`重置失败: ${result.message}`, 'error');
-      log(`❌ 重置失败: ${result.message}`, 'error');
-    }
-  } catch (error) {
-    showToast(`重置失败: ${error.message}`, 'error');
-    log(`❌ 重置失败: ${error.message}`, 'error');
-  } finally {
-    btn.disabled = false;
-    btn.innerHTML = originalHtml;
-    try { lucide.createIcons(); } catch (e) {}
-  }
-}
-
 // 安装 AI 规则（强制 AI 使用 ask_continue 工具）
 async function installAIRules() {
-  // 验证工作目录是否已设置（必填）
-  const aiRulesPathInput = document.getElementById('ai-rules-path');
-  const aiRulesPath = aiRulesPathInput ? aiRulesPathInput.value.trim() : '';
-  
-  // 如果插件管理页面的工作目录为空，尝试使用主页的工作目录
-  let workspacePath = aiRulesPath;
-  if (!workspacePath) {
-    const mainWorkspaceInput = document.getElementById('workspace-path-input');
-    workspacePath = mainWorkspaceInput ? mainWorkspaceInput.value.trim() : '';
-  }
-  
-  if (!workspacePath) {
-    log('❌ 未设置工作目录，无法安装 AI 规则', 'error');
-    showToast('请先设置工作目录！AI 规则需要安装到工作目录中。', 'error', 5000);
-    
-    // 高亮显示工作目录输入框
-    if (aiRulesPathInput) {
-      aiRulesPathInput.style.borderColor = '#ef4444';
-      aiRulesPathInput.focus();
-      setTimeout(() => {
-        aiRulesPathInput.style.borderColor = '';
-      }, 3000);
-    }
-    return;
-  }
-  
   const btn = document.getElementById('install-rules-btn');
   const originalHtml = btn.innerHTML;
   
@@ -2991,7 +2802,6 @@ async function installAIRules() {
   try { lucide.createIcons(); } catch (e) {}
   
   log('开始安装 AI 规则...', 'info');
-  log(`📁 工作目录: ${workspacePath}`, 'info');
   showToast('正在安装 AI 规则...', 'info');
   
   try {
@@ -3013,7 +2823,7 @@ async function installAIRules() {
       if (result.message.includes('工作区')) {
         await showModal(
           '需要设置工作区',
-          '请先在主页设置工作区路径，AI 规则将安装到工作区根目录的 .windsurfrules 文件中。'
+          '请先在客户端中设置工作区路径，AI 规则将安装到工作区根目录的 .windsurfrules 文件中。'
         );
       }
     }

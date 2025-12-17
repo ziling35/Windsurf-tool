@@ -89,6 +89,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 标记账号
   markAccount: (id, marked) => ipcRenderer.invoke('mark-account', { id, marked }),
   
+  // 根据邮箱标记账号
+  markAccountByEmail: (email, marked) => ipcRenderer.invoke('mark-account-by-email', { email, marked }),
+  
+  // 检查账号是否已标记（根据邮箱）
+  isMarkedByEmail: (email) => ipcRenderer.invoke('is-marked-by-email', email),
+  
   // 删除账号
   deleteAccount: (id) => ipcRenderer.invoke('delete-account', id),
   

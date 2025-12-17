@@ -929,6 +929,32 @@ ipcMain.handle('mark-account', async (event, { id, marked }) => {
   }
 });
 
+// 根据邮箱标记/取消标记账号
+ipcMain.handle('mark-account-by-email', async (event, { email, marked }) => {
+  try {
+    const success = accountHistoryManager.markAccountByEmail(email, marked);
+    if (success) {
+      return { success: true, message: marked ? '已标记为已使用' : '已取消标记' };
+    } else {
+      return { success: false, message: '操作失败' };
+    }
+  } catch (error) {
+    console.error('标记账号失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 检查账号是否已标记（根据邮箱）
+ipcMain.handle('is-marked-by-email', async (event, email) => {
+  try {
+    const marked = accountHistoryManager.isMarkedByEmail(email);
+    return { success: true, marked };
+  } catch (error) {
+    console.error('检查标记状态失败:', error);
+    return { success: false, marked: false };
+  }
+});
+
 // 删除历史账号
 ipcMain.handle('delete-account', async (event, id) => {
   try {
@@ -1564,25 +1590,13 @@ ipcMain.handle('install-plugin', async (event) => {
         console.error('[安装插件] ⚠️ 清理 extensions.json 失败:', err.message);
         console.error('[安装插件] 错误堆栈:', err.stack);
         
-        // 如果解析失败，尝试备份并重置为空数组
-        try {
-          const backupPath = extensionsJsonPath + '.backup.' + Date.now();
-          console.log('[安装插件] 备份损坏的 extensions.json...');
-          fs.copyFileSync(extensionsJsonPath, backupPath);
-          console.log(`[安装插件] 已备份到: ${backupPath}`);
-          
-          console.log('[安装插件] 重置 extensions.json 为空数组...');
-          fs.writeFileSync(extensionsJsonPath, '[]', 'utf-8');
-          console.log('[安装插件] ✅ 已重置 extensions.json');
-          
-          event.sender.send('switch-progress', { 
-            step: 'info', 
-            message: `[${currentStep}/${TOTAL_STEPS}] ✅ 已重置损坏的配置文件` 
-          });
-        } catch (resetErr) {
-          console.error('[安装插件] ❌ 重置 extensions.json 失败:', resetErr.message);
-          console.error('[安装插件] 错误堆栈:', resetErr.stack);
-        }
+        // 【重要修复】不再重置为空数组，避免误删其他插件
+        // 如果解析失败，只记录警告并跳过这一步
+        console.warn('[安装插件] ⚠️ extensions.json 解析失败，跳过清理步骤（保护其他插件）');
+        event.sender.send('switch-progress', { 
+          step: 'info', 
+          message: `[${currentStep}/${TOTAL_STEPS}] ⚠️ 跳过配置清理（保护其他插件）` 
+        });
       }
     } else {
       console.log('[安装插件] extensions.json 不存在，无需清理');
