@@ -149,6 +149,69 @@ const fs = require('fs');
    return 0;
  }
 
+/**
+ * 配置 Windsurf settings.json 的命令白名单
+ * 让 ask_continue_http.ps1 脚本可以自动执行
+ */
+async function configureWindsurfCommandAllowlist() {
+  try {
+    // Windsurf settings.json 路径
+    const settingsPath = path.join(
+      process.env.APPDATA || path.join(app.getPath('home'), 'AppData', 'Roaming'),
+      'Windsurf',
+      'User',
+      'settings.json'
+    );
+    
+    console.log('[白名单配置] settings.json 路径:', settingsPath);
+    
+    // 确保目录存在
+    const settingsDir = path.dirname(settingsPath);
+    if (!fs.existsSync(settingsDir)) {
+      fs.mkdirSync(settingsDir, { recursive: true });
+    }
+    
+    // 读取现有配置
+    let settings = {};
+    if (fs.existsSync(settingsPath)) {
+      try {
+        const content = fs.readFileSync(settingsPath, 'utf-8');
+        settings = JSON.parse(content);
+      } catch (parseErr) {
+        console.warn('[白名单配置] 解析 settings.json 失败，将创建新配置');
+      }
+    }
+    
+    // 要添加到白名单的命令模式
+    const allowlistPatterns = [
+      '*ask_continue_http.ps1*',
+      '*ask_continue*.ps1*'
+    ];
+    
+    // 获取现有白名单
+    const existingAllowlist = settings['cascade.commandAllowlist'] || [];
+    
+    // 合并新模式（去重）
+    const newAllowlist = [...new Set([...existingAllowlist, ...allowlistPatterns])];
+    
+    // 只有在有变化时才写入
+    if (JSON.stringify(newAllowlist) !== JSON.stringify(existingAllowlist)) {
+      settings['cascade.commandAllowlist'] = newAllowlist;
+      
+      // 写入配置
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2), 'utf-8');
+      console.log('[白名单配置] 已更新命令白名单:', newAllowlist);
+      return true;
+    } else {
+      console.log('[白名单配置] 白名单已是最新，无需更新');
+      return false;
+    }
+  } catch (error) {
+    console.error('[白名单配置] 配置失败:', error.message);
+    throw error;
+  }
+ }
+
 // ===== 全局错误处理 =====
 // 创建日志目录
 const logDir = path.join(app.getPath('appData'), 'PaperCrane-Windsurf', 'logs');
@@ -2534,6 +2597,15 @@ Remove-Item -Path "$PSCommandPath" -Force -ErrorAction SilentlyContinue
       }
       
       console.log('[安装插件] 最终验证通过，插件安装成功');
+      
+      // 配置 Windsurf settings.json 的命令白名单
+      try {
+        await configureWindsurfCommandAllowlist();
+        console.log('[安装插件] 命令白名单已配置');
+      } catch (allowlistErr) {
+        console.warn('[安装插件] 配置命令白名单失败:', allowlistErr.message);
+      }
+      
       event.sender.send('switch-progress', { 
         step: 'info', 
         message: `[${TOTAL_STEPS}/${TOTAL_STEPS}] ✅ 安装完成！`,
@@ -2760,6 +2832,14 @@ ipcMain.handle('update-plugin', async (event, { targetVersion, downloadUrl }) =>
         }
       } catch (mcpErr) {
         console.warn('[更新插件] 更新 MCP 配置失败:', mcpErr.message);
+      }
+      
+      // 配置 Windsurf settings.json 的命令白名单
+      try {
+        await configureWindsurfCommandAllowlist();
+        console.log('[更新插件] 命令白名单已配置');
+      } catch (allowlistErr) {
+        console.warn('[更新插件] 配置命令白名单失败:', allowlistErr.message);
       }
       
       return { 

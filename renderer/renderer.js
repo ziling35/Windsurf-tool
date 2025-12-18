@@ -280,7 +280,8 @@ async function installAIRulesToWorkspace() {
 }
 
 // 显示账号密码弹窗（带复制功能）
-function showAccountModal(title, email, password) {
+// isPro: 是否为Pro账号（只显示名称，不显示密码）
+function showAccountModal(title, email, password, isPro = false) {
   return new Promise((resolve) => {
     const modal = document.getElementById('custom-modal');
     const modalTitle = document.getElementById('modal-title');
@@ -291,39 +292,67 @@ function showAccountModal(title, email, password) {
     
     modalTitle.textContent = title;
     
-    // 构建账号密码显示内容，带复制按钮
-    const passwordText = password || '无（无限额度账号）';
-    const modalContent = `
-      <div style="font-family: 'Microsoft YaHei', '微软雅黑', sans-serif; line-height: 2;">
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
-          <span style="flex: 1;">邮箱：${email}</span>
-          <button class="icon-btn copy-btn" data-copy="${email}" title="复制邮箱">
-            <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
-          </button>
+    // Pro账号只显示名称，不显示密码
+    let modalContent;
+    if (isPro) {
+      modalContent = `
+        <div style="font-family: 'Microsoft YaHei', '微软雅黑', sans-serif; line-height: 2;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+            <span style="flex: 1;">账号名称：${email}</span>
+          </div>
+          <div style="border-top: 1px solid #e5e7eb; padding-top: 15px; color: #6b7280; font-size: 14px; font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;">
+            Pro账号已加入历史列表（不自动切换）。
+          </div>
         </div>
-        <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
-          <span style="flex: 1;">密码：${passwordText}</span>
-          ${password ? `<button class="icon-btn copy-btn" data-copy="${password}" title="复制密码"><i data-lucide="copy" style="width: 16px; height: 16px;"></i></button>` : ''}
+      `;
+    } else {
+      // 构建账号密码显示内容，带复制按钮
+      const passwordText = password || '无（无限额度账号）';
+      modalContent = `
+        <div style="font-family: 'Microsoft YaHei', '微软雅黑', sans-serif; line-height: 2;">
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 10px;">
+            <span style="flex: 1;">邮箱：${email}</span>
+            <button class="icon-btn copy-btn" data-copy="${email}" title="复制邮箱">
+              <i data-lucide="copy" style="width: 16px; height: 16px;"></i>
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px; margin-bottom: 15px;">
+            <span style="flex: 1;">密码：${passwordText}</span>
+            ${password ? `<button class="icon-btn copy-btn" data-copy="${password}" title="复制密码"><i data-lucide="copy" style="width: 16px; height: 16px;"></i></button>` : ''}
+          </div>
+          <div style="border-top: 1px solid #e5e7eb; padding-top: 15px; color: #6b7280; font-size: 14px; font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;">
+            该账号已加入历史列表（不自动切换）。
+          </div>
         </div>
-        <div style="border-top: 1px solid #e5e7eb; padding-top: 15px; color: #6b7280; font-size: 14px; font-family: 'Microsoft YaHei', '微软雅黑', sans-serif;">
-          该账号已加入历史列表（不自动切换）。
-        </div>
-      </div>
-    `;
+      `;
+    }
     
     modalMessage.innerHTML = modalContent;
     
     // 重新创建图标
     try { lucide.createIcons(); } catch (e) {}
     
-    // 添加复制全部按钮
-    const copyAllBtn = document.createElement('button');
-    copyAllBtn.className = 'btn btn-secondary';
-    copyAllBtn.innerHTML = '<i data-lucide="copy"></i><span>复制全部</span>';
-    copyAllBtn.style.marginRight = 'auto';
-    
-    // 插入到确认按钮之前
-    modalFooter.insertBefore(copyAllBtn, modalFooter.firstChild);
+    // Pro账号不显示复制全部按钮
+    if (!isPro) {
+      // 添加复制全部按钮
+      const copyAllBtn = document.createElement('button');
+      copyAllBtn.className = 'btn btn-secondary';
+      copyAllBtn.innerHTML = '<i data-lucide="copy"></i><span>复制全部</span>';
+      copyAllBtn.style.marginRight = 'auto';
+      
+      // 插入到确认按钮之前
+      modalFooter.insertBefore(copyAllBtn, modalFooter.firstChild);
+      
+      // 复制全部（邮箱----密码格式）
+      copyAllBtn.addEventListener('click', () => {
+        const fullText = password ? `${email}----${password}` : email;
+        navigator.clipboard.writeText(fullText).then(() => {
+          showToast('✅ 已复制完整账号信息', 'success');
+        }).catch(() => {
+          showToast('❌ 复制失败', 'error');
+        });
+      });
+    }
     
     // 重新创建图标
     try { lucide.createIcons(); } catch (e) {}
@@ -343,7 +372,7 @@ function showAccountModal(title, email, password) {
       });
     });
     
-    // 复制全部（邮箱----密码格式）
+    // handleCopyAll 保留用于兼容，但Pro账号不会用到
     const handleCopyAll = () => {
       const fullText = password ? `${email}----${password}` : email;
       navigator.clipboard.writeText(fullText).then(() => {
@@ -1010,7 +1039,14 @@ function bindServerHistoryItemEvents() {
 }
 
 // 检查插件是否安装（切换账号前调用）
-async function checkPluginInstalledForSwitch() {
+// skipForPro: 如果是Pro卡密类型，跳过插件检查
+async function checkPluginInstalledForSwitch(skipForPro = false) {
+  // Pro卡密跳过插件检查
+  if (skipForPro) {
+    log('✅ Pro卡密跳过插件检查', 'info');
+    return true;
+  }
+  
   try {
     const pluginResult = await window.electronAPI.checkPluginStatus();
     if (pluginResult.success && pluginResult.data && pluginResult.data.pluginInstalled) {
@@ -1032,6 +1068,21 @@ async function checkPluginInstalledForSwitch() {
   }
 }
 
+// 检查当前卡密是否为Pro类型
+async function isProKeyType() {
+  try {
+    const result = await window.electronAPI.checkKeyStatus();
+    if (result.success && result.data) {
+      const keyType = result.data.key_type || result.data.keyType || 'limited';
+      return keyType === 'pro';
+    }
+    return false;
+  } catch (e) {
+    console.error('检查卡密类型失败:', e);
+    return false;
+  }
+}
+
 // 切换到服务器账号
 async function switchToServerAccount(email, apiKey) {
   // 版本检查
@@ -1041,8 +1092,11 @@ async function switchToServerAccount(email, apiKey) {
     return;
   }
   
-  // 插件安装检查
-  const pluginOk = await checkPluginInstalledForSwitch();
+  // 检查是否为Pro卡密类型（Pro卡密跳过插件检查）
+  const isPro = await isProKeyType();
+  
+  // 插件安装检查（Pro卡密跳过）
+  const pluginOk = await checkPluginInstalledForSwitch(isPro);
   if (!pluginOk) {
     return;
   }
@@ -1098,8 +1152,11 @@ async function switchToHistoryAccount(id) {
     return;
   }
   
-  // 插件安装检查
-  const pluginOk = await checkPluginInstalledForSwitch();
+  // 检查是否为Pro卡密类型（Pro卡密跳过插件检查）
+  const isPro = await isProKeyType();
+  
+  // 插件安装检查（Pro卡密跳过）
+  const pluginOk = await checkPluginInstalledForSwitch(isPro);
   if (!pluginOk) {
     return;
   }
@@ -1345,17 +1402,26 @@ async function showManualInputModal() {
       }
     }
 
-    const { email, api_key, password } = accountResult.data;
+    const { email, api_key, password, name, is_pro } = accountResult.data;
     const label = password || 'PaperCrane';
 
-    log(`✅ 获取到账号: ${email}${password ? ' (有限额度)' : ' (无限额度)'}`, 'success');
+    // Pro账号只显示名称
+    if (is_pro) {
+      log(`✅ 获取到Pro账号: ${name || email}`, 'success');
+    } else {
+      log(`✅ 获取到账号: ${email}${password ? ' (有限额度)' : ' (无限额度)'}`, 'success');
+    }
 
     // 刷新秘钥状态和历史列表（历史写入在主进程完成，这里只刷新显示）
     await checkKeyStatus();
     await loadAccountHistory();
 
-    // 使用新的账号密码弹窗（带复制功能）
-    await showAccountModal('获取账号成功', email, password);
+    // Pro账号只显示名称，不显示密码
+    if (is_pro) {
+      await showAccountModal('获取Pro账号成功', name || email, null, true);
+    } else {
+      await showAccountModal('获取账号成功', email, password);
+    }
   } catch (error) {
     log(`❌ 获取账号失败: ${error.message}`, 'error');
     showToast(`获取账号失败: ${error.message}`, 'error');
@@ -1604,8 +1670,11 @@ async function oneClickSwitch() {
     return; // 版本过低，阻止操作
   }
   
-  // 插件安装检查
-  const pluginOk = await checkPluginInstalledForSwitch();
+  // 检查是否为Pro卡密类型（Pro卡密跳过插件检查）
+  const isPro = await isProKeyType();
+  
+  // 插件安装检查（Pro卡密跳过）
+  const pluginOk = await checkPluginInstalledForSwitch(isPro);
   if (!pluginOk) {
     return;
   }
@@ -1679,14 +1748,20 @@ async function oneClickSwitch() {
       }
     }
     
-    const { email, api_key, password } = accountResult.data;
+    const { email, api_key, password, name, is_pro } = accountResult.data;
     
     // 根据是否返回密码决定 label
+    // Pro账号：使用 'Pro'
     // 有密码 = 有限额度，使用密码作为 label
     // 无密码 = 无限额度，使用 'PaperCrane'
-    const label = password || 'PaperCrane';
+    const label = is_pro ? 'Pro' : (password || 'PaperCrane');
     
-    log(`✅ 获取到账号: ${email}${password ? ' (有限额度)' : ' (无限额度)'}`, 'success');
+    // Pro账号只显示名称
+    if (is_pro) {
+      log(`✅ 获取到Pro账号: ${name || email}`, 'success');
+    } else {
+      log(`✅ 获取到账号: ${email}${password ? ' (有限额度)' : ' (无限额度)'}`, 'success');
+    }
     
     // 获取账号后自动刷新秘钥状态（额度等）
     await checkKeyStatus();
@@ -2261,6 +2336,162 @@ async function checkPluginStatus(pluginId = null) {
 
 // 保存插件更新信息（用于更新按钮）
 let pluginUpdateInfo = null;
+let lastPluginUpdateCheck = 0; // 上次检查插件更新的时间戳
+
+/**
+ * 静默检查插件更新（启动时和定时检查使用）
+ * 如果发现更新，会弹出提醒对话框
+ * @param {boolean} silent 是否静默模式（不显示无更新提示）
+ */
+async function checkPluginUpdateSilently(silent = true) {
+  try {
+    // 获取本地插件版本
+    let localVersion = '0.0.0';
+    const statusResult = await window.electronAPI.checkPluginStatus();
+    if (statusResult.success && statusResult.data && statusResult.data.pluginVersion) {
+      localVersion = statusResult.data.pluginVersion;
+    } else if (!statusResult.success || !statusResult.data?.pluginInstalled) {
+      // 插件未安装，不检查更新
+      console.log('[插件更新检查] 插件未安装，跳过检查');
+      return;
+    }
+    
+    console.log('[插件更新检查] 本地版本:', localVersion);
+    
+    // 调用后台 API 检查更新
+    const updateResult = await window.electronAPI.checkPluginUpdate({
+      pluginName: 'windsurf-continue-pro',
+      clientVersion: localVersion
+    });
+    
+    if (updateResult.success && updateResult.data) {
+      const { has_update, latest_version, update_title, update_description, download_url, is_force_update } = updateResult.data;
+      
+      console.log('[插件更新检查] 服务器最新版本:', latest_version, '有更新:', has_update);
+      
+      // 保存更新信息供其他地方使用
+      pluginUpdateInfo = {
+        latestVersion: latest_version,
+        downloadUrl: download_url,
+        hasUpdate: has_update,
+        isForceUpdate: is_force_update
+      };
+      
+      if (has_update) {
+        // 发现更新，弹出提醒
+        showPluginUpdateNotification({
+          currentVersion: localVersion,
+          latestVersion: latest_version,
+          updateTitle: update_title,
+          updateDescription: update_description,
+          downloadUrl: download_url,
+          isForceUpdate: is_force_update
+        });
+      } else if (!silent) {
+        showToast('插件已是最新版本', 'success');
+      }
+    }
+    
+    lastPluginUpdateCheck = Date.now();
+  } catch (error) {
+    console.error('[插件更新检查] 失败:', error);
+  }
+}
+
+/**
+ * 显示插件更新提醒弹窗
+ */
+function showPluginUpdateNotification(info) {
+  const { currentVersion, latestVersion, updateTitle, updateDescription, isForceUpdate } = info;
+  
+  // 创建弹窗元素
+  const overlay = document.createElement('div');
+  overlay.id = 'plugin-update-modal-overlay';
+  overlay.style.cssText = `
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+  `;
+  
+  const forceStyle = isForceUpdate ? 'border: 2px solid #ef4444;' : '';
+  const titleColor = isForceUpdate ? '#dc2626' : '#1e40af';
+  const badgeHtml = isForceUpdate ? '<span style="background: #ef4444; color: white; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px;">强制更新</span>' : '';
+  
+  overlay.innerHTML = `
+    <div style="background: white; border-radius: 12px; padding: 24px; max-width: 420px; width: 90%; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1); ${forceStyle}">
+      <div style="display: flex; align-items: center; margin-bottom: 16px;">
+        <i data-lucide="package" style="width: 28px; height: 28px; color: ${titleColor}; margin-right: 12px;"></i>
+        <h3 style="margin: 0; color: ${titleColor}; font-size: 18px;">发现插件新版本${badgeHtml}</h3>
+      </div>
+      
+      <div style="background: #f8fafc; border-radius: 8px; padding: 12px; margin-bottom: 16px;">
+        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+          <span style="color: #64748b;">当前版本</span>
+          <span style="color: #334155; font-weight: 500;">${currentVersion}</span>
+        </div>
+        <div style="display: flex; justify-content: space-between;">
+          <span style="color: #64748b;">最新版本</span>
+          <span style="color: #059669; font-weight: 600;">${latestVersion}</span>
+        </div>
+      </div>
+      
+      ${updateTitle ? `<h4 style="margin: 0 0 8px 0; color: #1e293b; font-size: 15px;">${updateTitle}</h4>` : ''}
+      ${updateDescription ? `<p style="margin: 0 0 20px 0; color: #64748b; font-size: 14px; line-height: 1.5;">${updateDescription}</p>` : ''}
+      
+      <div style="display: flex; gap: 12px; justify-content: flex-end;">
+        ${!isForceUpdate ? `<button id="plugin-update-later-btn" style="padding: 10px 20px; border: 1px solid #e2e8f0; background: white; border-radius: 8px; cursor: pointer; color: #64748b; font-size: 14px;">稍后更新</button>` : ''}
+        <button id="plugin-update-now-btn" style="padding: 10px 20px; border: none; background: linear-gradient(135deg, #3b82f6, #1d4ed8); color: white; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 500;">立即更新</button>
+      </div>
+    </div>
+  `;
+  
+  document.body.appendChild(overlay);
+  try { lucide.createIcons(); } catch (e) {}
+  
+  // 绑定事件
+  const laterBtn = document.getElementById('plugin-update-later-btn');
+  const nowBtn = document.getElementById('plugin-update-now-btn');
+  
+  if (laterBtn) {
+    laterBtn.addEventListener('click', () => {
+      overlay.remove();
+    });
+  }
+  
+  if (nowBtn) {
+    nowBtn.addEventListener('click', async () => {
+      overlay.remove();
+      // 切换到插件安装 Tab 并触发更新
+      const pluginTab = document.querySelector('[data-tab="plugin-install"]');
+      if (pluginTab) {
+        pluginTab.click();
+      }
+      // 延迟一点执行更新，确保 Tab 已切换
+      setTimeout(() => {
+        updatePlugin();
+      }, 300);
+    });
+  }
+  
+  // 强制更新时禁止点击外部关闭
+  if (!isForceUpdate) {
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) {
+        overlay.remove();
+      }
+    });
+  }
+  
+  // 日志记录
+  log(`📦 发现插件新版本: ${currentVersion} → ${latestVersion}`, 'info');
+}
 
 // 从服务器获取插件信息并检查更新
 async function fetchPluginServerInfo(pluginId = null) {
@@ -3601,6 +3832,19 @@ document.addEventListener('DOMContentLoaded', async () => {
       checkClientVersion(true); // 强制检查，忽略间隔限制
     }, 30 * 60 * 1000); // 30分钟
   }, 5 * 60 * 1000); // 首次检查延后5分钟，避免与启动时检查冲突
+  
+  // ===== 插件更新检查 =====
+  // 启动时检查插件更新（延迟 3 秒，等待界面加载完成）
+  setTimeout(() => {
+    console.log('[启动] 检查插件更新...');
+    checkPluginUpdateSilently(true);
+  }, 3000);
+  
+  // 定期检查插件更新（每 30 分钟）
+  setInterval(() => {
+    console.log('[定时] 检查插件更新...');
+    checkPluginUpdateSilently(true);
+  }, 30 * 60 * 1000);
   
   // ===== 主页事件绑定 =====
   
