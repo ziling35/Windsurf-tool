@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 切换账号
   switchAccount: (data) => ipcRenderer.invoke('switch-account', data),
   
+  // 热切换账号（通过插件，不重启 Windsurf）
+  hotSwitchAccount: (data) => ipcRenderer.invoke('hot-switch-account', data),
+  
   // 重置设备码
   resetDeviceIds: () => ipcRenderer.invoke('reset-device-ids'),
   

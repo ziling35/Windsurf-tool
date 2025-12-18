@@ -903,13 +903,16 @@ ipcMain.handle('get-account', async () => {
 
     // 如果获取成功且包含邮箱和 API Key，则写入历史记录
     if (result && result.success && result.data) {
-      const { email, api_key, password } = result.data;
+      const { email, api_key, password, name, is_pro } = result.data;
+      // 始终使用原始 email 作为唯一标识（与服务器保持一致）
+      // Pro账号标记为 'Pro'，有密码的使用密码，无密码的使用 'PaperCrane'
+      const label = is_pro ? 'Pro' : (password || 'PaperCrane');
+      
       if (email && api_key) {
-        const label = password || 'PaperCrane';
         try {
           accountHistoryManager.addAccount({
             token: api_key,
-            email,
+            email: email,  // 始终使用原始 email，避免与服务器历史不匹配导致重复
             label
           });
         } catch (historyError) {
@@ -1044,6 +1047,40 @@ ipcMain.handle('get-server-account-history', async () => {
   }
 });
 
+// 热切换账号（通过插件，不重启 Windsurf）
+ipcMain.handle('hot-switch-account', async (event, { token, email, label, workspacePath }) => {
+  try {
+    console.log('🔥 开始热切换账号...');
+    console.log('   Email:', email);
+    console.log('   工作区:', workspacePath);
+    
+    const result = await KeyManager.hotSwitchAccount(token, email, label, workspacePath);
+    
+    if (result.success) {
+      console.log('✅ 热切换成功');
+      
+      // 更新本地历史记录
+      try {
+        accountHistoryManager.addAccount({
+          token: token,
+          email: email,
+          label: label
+        });
+      } catch (historyError) {
+        console.error('写入账号历史失败:', historyError);
+      }
+      
+      // 更新最后使用的邮箱
+      configManager.setLastEmail(email);
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('热切换账号失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // 保存配置项
 ipcMain.handle('save-config', async (event, { key, value }) => {
   try {
@@ -1153,36 +1190,35 @@ ipcMain.handle('switch-account', async (event, accountData) => {
       
       configManager.setLastEmail(email);
       
-      if (isRunning && closed) {
-        event.sender.send('switch-progress', { step: 'launch', message: '⏳ 正在启动 Windsurf...' });
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        let exePath = configManager.getWindsurfExePath();
-        if (!exePath) {
-          exePath = detectWindsurfExecutable();
-        }
-        if (exePath) {
-          const launched = await processMonitor.launchWindsurf(exePath);
-          if (launched) {
-            let started = false;
-            const maxAttempts = 20;
-            for (let i = 0; i < maxAttempts; i++) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              started = await processMonitor.isWindsurfRunning();
-              if (started) break;
-            }
-            
-            if (started) {
-              event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
-            } else {
-              event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
-            }
+      // 切换完成后总是尝试启动 Windsurf（无论之前是否运行）
+      event.sender.send('switch-progress', { step: 'launch', message: '⏳ 正在启动 Windsurf...' });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      let exePath = configManager.getWindsurfExePath();
+      if (!exePath) {
+        exePath = detectWindsurfExecutable();
+      }
+      if (exePath) {
+        const launched = await processMonitor.launchWindsurf(exePath);
+        if (launched) {
+          let started = false;
+          const maxAttempts = 20;
+          for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            started = await processMonitor.isWindsurfRunning();
+            if (started) break;
+          }
+          
+          if (started) {
+            event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
           } else {
-            event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
+            event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
           }
         } else {
-          event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
+          event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
         }
+      } else {
+        event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
       }
       
       event.sender.send('switch-progress', { step: 'complete', message: '✅ 切换完成' });
@@ -1303,37 +1339,35 @@ ipcMain.handle('switch-to-history-account', async (event, id) => {
       accountHistoryManager.updateLastUsed(id);
       configManager.setLastEmail(account.email);
       
-      // 如果之前在运行且确认已关闭，自动重启（防止残留或用户手动关闭导致误重启）
-      if (isRunning && closed) {
-        event.sender.send('switch-progress', { step: 'launch', message: '⏳ 正在启动 Windsurf...' });
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        
-        let exePath = configManager.getWindsurfExePath();
-        if (!exePath) {
-          exePath = detectWindsurfExecutable();
-        }
-        if (exePath) {
-          const launched = await processMonitor.launchWindsurf(exePath);
-          if (launched) {
-            let started = false;
-            const maxAttempts = 20;
-            for (let i = 0; i < maxAttempts; i++) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-              started = await processMonitor.isWindsurfRunning();
-              if (started) break;
-            }
-            
-            if (started) {
-              event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
-            } else {
-              event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
-            }
+      // 切换完成后总是尝试启动 Windsurf（无论之前是否运行）
+      event.sender.send('switch-progress', { step: 'launch', message: '⏳ 正在启动 Windsurf...' });
+      await new Promise(resolve => setTimeout(resolve, 1500));
+      
+      let exePath = configManager.getWindsurfExePath();
+      if (!exePath) {
+        exePath = detectWindsurfExecutable();
+      }
+      if (exePath) {
+        const launched = await processMonitor.launchWindsurf(exePath);
+        if (launched) {
+          let started = false;
+          const maxAttempts = 20;
+          for (let i = 0; i < maxAttempts; i++) {
+            await new Promise(resolve => setTimeout(resolve, 500));
+            started = await processMonitor.isWindsurfRunning();
+            if (started) break;
+          }
+          
+          if (started) {
+            event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
           } else {
-            event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
+            event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
           }
         } else {
-          event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
+          event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
         }
+      } else {
+        event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
       }
       
       // 发送完成消息

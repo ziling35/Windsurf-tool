@@ -149,12 +149,12 @@
                 </div>
               </div>
               
-              <div class="status-row">
+              <div class="status-row" id="current-account-row">
                 <span class="status-label">当前账号：</span>
                 <span class="status-value" id="current-email">加载中...</span>
               </div>
               
-              <div class="status-row">
+              <div class="status-row" id="current-token-row">
                 <span class="status-label">Token：</span>
                 <span class="status-value" id="current-token">加载中...</span>
               </div>
@@ -235,6 +235,11 @@
           <button id="one-click-switch-btn" class="btn btn-secondary">
             <i data-lucide="zap"></i>
             <span>一键换号</span>
+          </button>
+          <!-- 热切换按钮暂时隐藏 -->
+          <button id="hot-switch-btn" class="btn btn-secondary" title="通过插件切换，仅重载窗口不重启Windsurf" style="display: none;">
+            <i data-lucide="flame"></i>
+            <span>热切换</span>
           </button>
           <button id="reset-device-switch-btn" class="btn btn-secondary">
             <i data-lucide="smartphone"></i>

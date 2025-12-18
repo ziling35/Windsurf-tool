@@ -150,18 +150,14 @@ class AccountHistoryManager {
     const accountIndex = this.history.accounts.findIndex(acc => acc.email === email);
     
     if (accountIndex === -1) {
-      // 如果账号不存在，创建一个只包含标记信息的记录
-      const accountData = {
-        id: uuidv4(),
-        email: email,
-        marked: marked,
-        markedAt: new Date().toISOString()
-      };
-      this.history.accounts.unshift(accountData);
-    } else {
-      this.history.accounts[accountIndex].marked = marked;
-      this.history.accounts[accountIndex].markedAt = new Date().toISOString();
+      // 账号不存在于本地历史中，不创建新记录（避免重复）
+      // 只返回成功状态，实际标记会在下次获取账号时同步
+      console.log(`⚠️ 账号 ${email} 不在本地历史中，跳过标记`);
+      return true;
     }
+    
+    this.history.accounts[accountIndex].marked = marked;
+    this.history.accounts[accountIndex].markedAt = new Date().toISOString();
     
     this.saveHistory();
     return true;

@@ -703,6 +703,107 @@ class KeyManager {
       };
     }
   }
+
+  /**
+   * 通过插件热切换账号（不重启 Windsurf）
+   * @param {string} token - API Token
+   * @param {string} email - 邮箱
+   * @param {string} label - 显示标签
+   * @param {string} workspacePath - 工作区路径（用于读取端口文件）
+   * @returns {Promise<Object>} 切换结果
+   */
+  static async hotSwitchAccount(token, email, label, workspacePath) {
+    try {
+      // 读取插件端口文件
+      let port = null;
+      
+      // 尝试从工作区读取端口
+      if (workspacePath) {
+        const workspacePortFile = path.join(workspacePath, '.ask_continue_port');
+        if (fs.existsSync(workspacePortFile)) {
+          port = parseInt(fs.readFileSync(workspacePortFile, 'utf-8').trim());
+        }
+      }
+      
+      // 尝试从用户目录读取
+      if (!port) {
+        const os = require('os');
+        const homePortFile = path.join(os.homedir(), '.ask_continue_port');
+        if (fs.existsSync(homePortFile)) {
+          const content = fs.readFileSync(homePortFile, 'utf-8').trim();
+          try {
+            const data = JSON.parse(content);
+            port = data.port;
+          } catch {
+            port = parseInt(content);
+          }
+        }
+      }
+      
+      if (!port) {
+        return {
+          success: false,
+          message: '未找到插件端口文件，请确保 Windsurf Continue Pro 插件正在运行'
+        };
+      }
+      
+      console.log(`[热切换] 连接到插件端口: ${port}`);
+      
+      // 构建 JSON-RPC 请求
+      const requestBody = {
+        jsonrpc: '2.0',
+        id: Date.now(),
+        method: 'switch_account',
+        params: {
+          token: token,
+          email: email,
+          label: label
+        }
+      };
+      
+      const response = await axios.post(
+        `http://127.0.0.1:${port}/`,
+        requestBody,
+        {
+          timeout: 30000, // 30秒超时（需要等待用户确认）
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+      
+      if (response.data.error) {
+        return {
+          success: false,
+          message: response.data.error.message || '切换失败'
+        };
+      }
+      
+      return {
+        success: true,
+        data: response.data.result,
+        message: '账号热切换成功'
+      };
+    } catch (error) {
+      console.error('[热切换] 失败:', error);
+      
+      let message = '热切换失败';
+      if (error.code === 'ECONNREFUSED') {
+        message = '无法连接到插件，请确保 Windsurf Continue Pro 插件正在运行';
+      } else if (error.code === 'ETIMEDOUT' || error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.response) {
+        message = error.response.data?.error?.message || `服务器错误 (${error.response.status})`;
+      } else {
+        message = error.message;
+      }
+      
+      return {
+        success: false,
+        message: message
+      };
+    }
+  }
 }
 
 module.exports = KeyManager;

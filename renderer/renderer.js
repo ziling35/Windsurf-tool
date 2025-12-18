@@ -11,6 +11,9 @@ let isVersionCheckInProgress = false; // 是否正在检查版本
 const VERSION_CHECK_INTERVAL = 5 * 60 * 1000; // 5分钟检查一次
 let versionUpdateRequired = false; // 是否需要更新
 
+// 插件安装状态标志（安装过程中暂停插件卸载监控弹窗）
+let isInstallingPlugin = false;
+
 // ===== 工具函数 =====
 
 // 初始化更多操作下拉菜单事件（使用事件委托）
@@ -509,8 +512,23 @@ async function loadKeyInfo(skipStatusCheck = false) {
           isActive = false;
         }
         
-        keyStatusEl.textContent = statusLabel;
+        // 检查是否为 Pro 卡密
+        const keyType = data.key_type || data.keyType || '';
+        const isPro = keyType.toLowerCase() === 'pro';
+        
+        // 显示状态和 PRO badge
+        if (isPro) {
+          keyStatusEl.innerHTML = `${statusLabel} <span class="pro-badge">PRO</span>`;
+        } else {
+          keyStatusEl.textContent = statusLabel;
+        }
         keyStatusEl.className = isActive ? 'key-info-value active' : 'key-info-value inactive';
+        
+        // Pro卡密下隐藏当前账号和Token行
+        const accountRow = document.getElementById('current-account-row');
+        const tokenRow = document.getElementById('current-token-row');
+        if (accountRow) accountRow.style.display = isPro ? 'none' : '';
+        if (tokenRow) tokenRow.style.display = isPro ? 'none' : '';
         
         // 显示剩余时间
         if (data.remaining_time) {
@@ -653,9 +671,25 @@ async function checkKeyStatus() {
     else if (status === 'expired') { statusLabel = '已过期'; }
     else { statusLabel = '已激活'; isActive = true; } // 旧接口默认为有效
     
-    keyStatusEl.textContent = statusLabel;
+    // 检查是否为 Pro 卡密
+    const keyType = data.key_type || data.keyType || '';
+    const isPro = keyType.toLowerCase() === 'pro';
+    
+    // 显示状态和 PRO badge
+    if (isPro) {
+      keyStatusEl.innerHTML = `${statusLabel} <span class="pro-badge">PRO</span>`;
+    } else {
+      keyStatusEl.textContent = statusLabel;
+    }
     keyStatusEl.className = isActive ? 'key-info-value active' : 'key-info-value inactive';
-    log(`✅ 秘钥状态: ${statusLabel}`, 'success');
+    
+    // Pro卡密下隐藏当前账号和Token行
+    const accountRow = document.getElementById('current-account-row');
+    const tokenRow = document.getElementById('current-token-row');
+    if (accountRow) accountRow.style.display = isPro ? 'none' : '';
+    if (tokenRow) tokenRow.style.display = isPro ? 'none' : '';
+    
+    log(`✅ 秘钥状态: ${statusLabel}${isPro ? ' (Pro卡密)' : ''}`, 'success');
     
     // 剩余时间（兼容老字段）
     if (data.remaining_time) {
@@ -715,10 +749,14 @@ async function displayCurrentAccount(showToastOnSuccess = false) {
     const { email, label, token, sessionId } = result.data;
     const maskedToken = maskToken(token);
     
-    emailSpan.textContent = email;
+    // 判断是否为Pro账号：非邮箱格式的id视为Pro账号
+    const isPro = !email.includes('@');
+    // Pro账号显示 name + id，普通账号显示 email
+    const displayName = isPro && label && label !== 'Unknown' ? `${label} (${email})` : email;
+    emailSpan.textContent = displayName;
     tokenSpan.textContent = maskedToken;
     
-    log(`当前账号: ${email}`, 'success');
+    log(`当前账号: ${displayName}`, 'success');
     if (showToastOnSuccess) {
       showToast('账号信息已刷新', 'success');
     }
@@ -937,14 +975,27 @@ async function loadAccountHistory() {
         item.classList.add('marked');
       }
       
+      // 根据账号类型显示不同内容
+      const isPro = account.is_pro === true;
+      const labelText = isPro ? (account.name || 'Pro') : (account.password || 'PaperCrane');
+      
+      // Pro账号：只显示名称，不显示邮箱
+      // 普通账号：显示邮箱
+      const displayName = isPro ? (account.name || 'Pro账号') : account.email;
+      
+      // Pro账号：显示 ID；普通账号：显示密码
+      const secondLine = isPro 
+        ? (account.account_id ? `<span style="color: #8b5cf6;">ID: ${account.account_id}</span>` : '')
+        : `密码: <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; user-select: all;">${account.password || 'N/A'}</code>`;
+      
       item.innerHTML = `
         <div class="history-info">
-          <div class="history-email">${account.email}</div>
-          <div class="history-password" style="font-size: 0.85em; color: #6b7280; margin-top: 2px;">
-            密码: <code style="background: #f3f4f6; padding: 2px 6px; border-radius: 4px; user-select: all;">${account.password}</code>
+          <div class="history-email">
+            ${displayName}
+            ${isPro ? '<span style="background: linear-gradient(135deg, #8b5cf6, #a855f7); color: white; font-size: 0.7em; padding: 2px 6px; border-radius: 4px; margin-left: 6px;">PRO</span>' : ''}
           </div>
+          ${secondLine ? `<div class="history-password" style="font-size: 0.85em; color: #6b7280; margin-top: 2px;">${secondLine}</div>` : ''}
           <div class="history-meta">
-            ${account.name ? `<span>名称: ${account.name}</span>` : ''}
             ${account.assigned_at ? `<span>获取时间: ${formatTime(account.assigned_at)}</span>` : ''}
             ${isMarked ? '<span style="color: #2f855a;">✓ 已标记</span>' : ''}
           </div>
@@ -953,10 +1004,10 @@ async function loadAccountHistory() {
           <button class="history-btn mark-btn ${isMarked ? 'marked' : ''}" title="${isMarked ? '取消标记' : '标记为已使用'}" data-email="${account.email}" data-marked="${isMarked}">
             <i data-lucide="${isMarked ? 'check-circle' : 'circle'}"></i>
           </button>
-          <button class="history-btn copy-btn" title="复制账号密码" data-email="${account.email}" data-password="${account.password}">
+          <button class="history-btn copy-btn" title="${isPro ? '复制邮箱' : '复制账号密码'}" data-email="${account.email}" data-password="${account.password || ''}" data-is-pro="${isPro}">
             <i data-lucide="copy"></i>
           </button>
-          <button class="history-btn switch-server-btn" title="切换到此账号" data-email="${account.email}" data-password="${account.password}" data-apikey="${account.api_key || ''}">
+          <button class="history-btn switch-server-btn" title="切换到此账号" data-email="${account.email}" data-apikey="${account.api_key || ''}" data-label="${labelText}">
             <i data-lucide="log-in"></i>
           </button>
         </div>
@@ -1010,11 +1061,18 @@ function bindServerHistoryItemEvents() {
     btn.addEventListener('click', async () => {
       const email = btn.getAttribute('data-email');
       const password = btn.getAttribute('data-password');
-      const text = `邮箱: ${email}\n密码: ${password}`;
+      const isPro = btn.getAttribute('data-is-pro') === 'true';
+      
+      let text;
+      if (isPro) {
+        text = email;  // Pro账号只复制邮箱
+      } else {
+        text = `邮箱: ${email}\n密码: ${password}`;
+      }
       
       try {
         await navigator.clipboard.writeText(text);
-        showToast('账号信息已复制到剪贴板', 'success');
+        showToast(isPro ? '邮箱已复制' : '账号信息已复制', 'success');
       } catch (e) {
         showToast('复制失败', 'error');
       }
@@ -1027,26 +1085,21 @@ function bindServerHistoryItemEvents() {
       const email = btn.getAttribute('data-email');
       const password = btn.getAttribute('data-password');
       const apiKey = btn.getAttribute('data-apikey');
+      const label = btn.getAttribute('data-label') || 'PaperCrane';
       
       if (!apiKey) {
         showToast('该账号没有 API Key，无法切换', 'error');
         return;
       }
       
-      await switchToServerAccount(email, apiKey);
+      await switchToServerAccount(email, apiKey, label);
     });
   });
 }
 
 // 检查插件是否安装（切换账号前调用）
-// skipForPro: 如果是Pro卡密类型，跳过插件检查
-async function checkPluginInstalledForSwitch(skipForPro = false) {
-  // Pro卡密跳过插件检查
-  if (skipForPro) {
-    log('✅ Pro卡密跳过插件检查', 'info');
-    return true;
-  }
-  
+// 所有账号类型都必须检测插件是否安装
+async function checkPluginInstalledForSwitch() {
   try {
     const pluginResult = await window.electronAPI.checkPluginStatus();
     if (pluginResult.success && pluginResult.data && pluginResult.data.pluginInstalled) {
@@ -1084,7 +1137,7 @@ async function isProKeyType() {
 }
 
 // 切换到服务器账号
-async function switchToServerAccount(email, apiKey) {
+async function switchToServerAccount(email, apiKey, label = 'PaperCrane') {
   // 版本检查
   const canProceed = await checkClientVersion();
   if (!canProceed) {
@@ -1092,26 +1145,24 @@ async function switchToServerAccount(email, apiKey) {
     return;
   }
   
-  // 检查是否为Pro卡密类型（Pro卡密跳过插件检查）
-  const isPro = await isProKeyType();
-  
-  // 插件安装检查（Pro卡密跳过）
-  const pluginOk = await checkPluginInstalledForSwitch(isPro);
+  // 插件安装检查（所有账号类型都需要检测）
+  const pluginOk = await checkPluginInstalledForSwitch();
   if (!pluginOk) {
     return;
   }
   
-  const confirmed = await showModal('确认切换', `确定要切换到账号 ${email} 吗？\n\n这将关闭并重启 Windsurf。`);
+  const accountType = label === 'Pro' ? 'Pro账号' : '此账号';
+  const confirmed = await showModal('确认切换', `确定要切换到${accountType}吗？\n\n切换后 Windsurf 将自动重启。`);
   if (!confirmed) return;
   
-  log(`正在切换到账号: ${email}...`, 'info');
+  log(`正在切换到账号: ${email} (${label})...`, 'info');
   showToast('正在切换账号...', 'info');
   
   // 使用 switch-account 接口，传入 token (apiKey) 和 email
   const result = await window.electronAPI.switchAccount({
     token: apiKey,
     email: email,
-    label: 'PaperCrane'
+    label: label
   });
   
   if (result.success) {
@@ -1152,11 +1203,8 @@ async function switchToHistoryAccount(id) {
     return;
   }
   
-  // 检查是否为Pro卡密类型（Pro卡密跳过插件检查）
-  const isPro = await isProKeyType();
-  
-  // 插件安装检查（Pro卡密跳过）
-  const pluginOk = await checkPluginInstalledForSwitch(isPro);
+  // 插件安装检查（所有账号类型都需要检测）
+  const pluginOk = await checkPluginInstalledForSwitch();
   if (!pluginOk) {
     return;
   }
@@ -1670,11 +1718,8 @@ async function oneClickSwitch() {
     return; // 版本过低，阻止操作
   }
   
-  // 检查是否为Pro卡密类型（Pro卡密跳过插件检查）
-  const isPro = await isProKeyType();
-  
-  // 插件安装检查（Pro卡密跳过）
-  const pluginOk = await checkPluginInstalledForSwitch(isPro);
+  // 插件安装检查（所有账号类型都需要检测）
+  const pluginOk = await checkPluginInstalledForSwitch();
   if (!pluginOk) {
     return;
   }
@@ -1791,6 +1836,93 @@ async function oneClickSwitch() {
   } catch (error) {
     log(`❌ 一键换号失败: ${error.message}`, 'error');
     showToast(`换号失败: ${error.message}`, 'error');
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHTML;
+      lucide.createIcons();
+    }
+  }
+}
+
+// ===== 热切换功能（不重启 Windsurf）=====
+
+// 热切换账号（通过插件，仅重载窗口而非重启整个 Windsurf）
+async function hotSwitch() {
+  // 版本检查
+  const canProceed = await checkClientVersion();
+  if (!canProceed) {
+    showToast('客户端版本过低，请更新后再试', 'error');
+    return;
+  }
+  
+  // 检查插件是否安装（热切换必须依赖插件）
+  const pluginOk = await checkPluginInstalledForSwitch(false);
+  if (!pluginOk) {
+    showToast('热切换需要安装插件', 'error');
+    return;
+  }
+  
+  const btn = document.getElementById('hot-switch-btn');
+  let originalHTML = '';
+  if (btn) {
+    btn.disabled = true;
+    originalHTML = btn.innerHTML;
+    btn.innerHTML = '<span>切换中...</span>';
+  }
+  
+  log('🔥 开始热切换流程（不重启）...', 'info');
+  showToast('开始热切换...', 'info');
+  
+  try {
+    // 获取账号
+    log('1️⃣ 正在获取账号...', 'info');
+    const accountResult = await window.electronAPI.getAccount();
+    
+    if (!accountResult.success) {
+      throw new Error(accountResult.message || '获取账号失败');
+    }
+    
+    const { email, api_key, password, name, is_pro } = accountResult.data;
+    const label = is_pro ? 'Pro' : (password || 'PaperCrane');
+    
+    log(`✅ 获取到账号: ${email}`, 'success');
+    
+    // 获取工作区路径
+    const workspaceResult = await window.electronAPI.getWorkspacePath();
+    const workspacePath = workspaceResult.success ? workspaceResult.data.workspacePath : null;
+    
+    // 通过插件热切换
+    log('2️⃣ 正在通过插件热切换...', 'info');
+    const switchResult = await window.electronAPI.hotSwitchAccount({
+      token: api_key,
+      email: email,
+      label: label,
+      workspacePath: workspacePath
+    });
+    
+    if (!switchResult.success) {
+      throw new Error(switchResult.message || '热切换失败');
+    }
+    
+    log('🎉 热切换成功！', 'success');
+    
+    if (switchResult.data?.reloadTriggered) {
+      showToast('账号已切换，Windsurf 正在重载...', 'success');
+    } else {
+      showToast('账号已切换，请在 Windsurf 中手动重载窗口 (Ctrl+Shift+P → Reload Window)', 'success', 5000);
+    }
+    
+    // 刷新状态
+    await checkKeyStatus();
+    setTimeout(() => {
+      displayCurrentAccount();
+      loadAccountHistory();
+    }, 1000);
+    
+  } catch (error) {
+    log(`❌ 热切换失败: ${error.message}`, 'error');
+    showToast(`热切换失败: ${error.message}`, 'error');
   } finally {
     if (btn) {
       btn.disabled = false;
@@ -2691,6 +2823,9 @@ async function installPlugin(forceInstall = false) {
   btn.disabled = true;
   updateBtnStatus(isReinstall ? '重新安装中...' : '安装中...');
   
+  // 设置安装中标志，暂停插件卸载监控弹窗
+  isInstallingPlugin = true;
+  
   log(`🚀 开始${isReinstall ? '重新安装' : '一键安装'}流程...`, 'info');
   showToast(`正在执行${isReinstall ? '重新安装' : '一键安装'}，请稍候...`, 'info');
   
@@ -2798,6 +2933,8 @@ async function installPlugin(forceInstall = false) {
     showToast(`安装失败: ${error.message}`, 'error');
     log(`❌ 一键安装失败: ${error.message}`, 'error');
   } finally {
+    // 重置安装中标志，恢复插件卸载监控
+    isInstallingPlugin = false;
     // 确保按钮始终被重新启用
     btn.disabled = false;
     btn.innerHTML = originalHtml;
@@ -3846,6 +3983,53 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkPluginUpdateSilently(true);
   }, 30 * 60 * 1000);
   
+  // ===== 插件卸载监控（每 10 秒检测一次）=====
+  // 记录上次插件安装状态
+  let lastPluginInstalledState = null;
+  setInterval(async () => {
+    try {
+      const result = await window.electronAPI.checkPluginStatus();
+      const currentInstalled = result.success && result.data && result.data.pluginInstalled;
+      
+      // 首次检测，记录状态
+      if (lastPluginInstalledState === null) {
+        lastPluginInstalledState = currentInstalled;
+        return;
+      }
+      
+      // 检测到插件从已安装变为未安装（被卸载）
+      // 如果正在安装插件，跳过监控弹窗
+      if (lastPluginInstalledState === true && currentInstalled === false && !isInstallingPlugin) {
+        console.log('[插件监控] ⚠️ 检测到插件被卸载！');
+        log('⚠️ 检测到插件被卸载，正在退出当前账号...', 'warning');
+        
+        // 显示提示弹窗
+        await showModal(
+          '插件已被卸载',
+          '检测到 ask-continue 插件已被卸载。\n\n为保证正常使用，当前账号已退出。请重新安装插件后再进行换号操作。',
+          { showCancel: false, confirmText: '我知道了' }
+        );
+        
+        // 关闭 Windsurf（退出账号）
+        try {
+          await window.electronAPI.killWindsurf();
+          log('✅ 已退出 Windsurf', 'info');
+          showToast('已退出 Windsurf，请重新安装插件', 'warning');
+        } catch (e) {
+          console.error('关闭 Windsurf 失败:', e);
+        }
+        
+        // 刷新插件状态显示
+        updatePluginStatus();
+      }
+      
+      // 更新状态记录
+      lastPluginInstalledState = currentInstalled;
+    } catch (e) {
+      console.error('[插件监控] 检测失败:', e);
+    }
+  }, 10 * 1000); // 每 10 秒检测一次
+  
   // ===== 主页事件绑定 =====
   
   // 秘钥相关
@@ -3904,6 +4088,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   // 快捷操作按钮
   document.getElementById('manual-input-btn')?.addEventListener('click', showManualInputModal);
   document.getElementById('one-click-switch-btn')?.addEventListener('click', oneClickSwitch);
+  document.getElementById('hot-switch-btn')?.addEventListener('click', hotSwitch);
   document.getElementById('reset-device-switch-btn')?.addEventListener('click', () => resetDeviceIds(false, 'switch'));
   
   // 手动输入弹窗
