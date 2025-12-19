@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // 关闭 Windsurf
   killWindsurf: () => ipcRenderer.invoke('kill-windsurf'),
   
+  // 清除 Windsurf 登录信息（退出登录）
+  clearWindsurfAuth: () => ipcRenderer.invoke('clear-windsurf-auth'),
+  
   // 启动 Windsurf
   launchWindsurf: (options) => ipcRenderer.invoke('launch-windsurf', options),
   
@@ -167,5 +170,22 @@ contextBridge.exposeInMainWorld('electronAPI', {
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   
   // 选择文件
-  selectFile: (options) => ipcRenderer.invoke('select-file', options)
+  selectFile: (options) => ipcRenderer.invoke('select-file', options),
+  
+  // ===== 文件保护 API =====
+  
+  // 检查文件保护状态
+  checkFileProtectionStatus: () => ipcRenderer.invoke('check-file-protection-status'),
+  
+  // 启用文件保护
+  enableFileProtection: () => ipcRenderer.invoke('enable-file-protection'),
+  
+  // 禁用文件保护
+  disableFileProtection: () => ipcRenderer.invoke('disable-file-protection'),
+  
+  // 隐藏敏感文件
+  hideSensitiveFiles: () => ipcRenderer.invoke('hide-sensitive-files'),
+  
+  // 显示隐藏的文件
+  unhideSensitiveFiles: () => ipcRenderer.invoke('unhide-sensitive-files')
 });

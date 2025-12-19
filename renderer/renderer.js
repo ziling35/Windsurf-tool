@@ -336,9 +336,10 @@ function showAccountModal(title, email, password, isPro = false) {
     try { lucide.createIcons(); } catch (e) {}
     
     // Pro账号不显示复制全部按钮
+    let copyAllBtn = null;
     if (!isPro) {
       // 添加复制全部按钮
-      const copyAllBtn = document.createElement('button');
+      copyAllBtn = document.createElement('button');
       copyAllBtn.className = 'btn btn-secondary';
       copyAllBtn.innerHTML = '<i data-lucide="copy"></i><span>复制全部</span>';
       copyAllBtn.style.marginRight = 'auto';
@@ -400,11 +401,15 @@ function showAccountModal(title, email, password, isPro = false) {
     const cleanup = () => {
       confirmBtn.removeEventListener('click', handleConfirm);
       cancelBtn.removeEventListener('click', handleCancel);
-      copyAllBtn.removeEventListener('click', handleCopyAll);
-      copyAllBtn.remove(); // 移除复制全部按钮
+      if (copyAllBtn) {
+        copyAllBtn.removeEventListener('click', handleCopyAll);
+        copyAllBtn.remove(); // 移除复制全部按钮
+      }
     };
     
-    copyAllBtn.addEventListener('click', handleCopyAll);
+    if (copyAllBtn) {
+      copyAllBtn.addEventListener('click', handleCopyAll);
+    }
     confirmBtn.addEventListener('click', handleConfirm);
     cancelBtn.addEventListener('click', handleCancel);
   });
@@ -523,6 +528,31 @@ async function loadKeyInfo(skipStatusCheck = false) {
           keyStatusEl.textContent = statusLabel;
         }
         keyStatusEl.className = isActive ? 'key-info-value active' : 'key-info-value inactive';
+        
+        // 秘钥未激活或已过期时，清除登录信息并退出 Windsurf
+        if (!isActive && (status === 'inactive' || status === 'expired')) {
+          const statusMsg = status === 'expired' ? '已过期' : '未激活';
+          log(`⚠️ 秘钥${statusMsg}，正在清除登录信息并退出 Windsurf...`, 'warning');
+          
+          await showModal(
+            `秘钥${statusMsg}`,
+            `检测到您的秘钥${statusMsg}。\n\n为保证正常使用，将清除登录信息并退出当前 Windsurf 账号。请续费或更换有效秘钥后重新使用。`,
+            { showCancel: false, confirmText: '我知道了' }
+          );
+          
+          try {
+            const result = await window.electronAPI.clearWindsurfAuth();
+            if (result.success) {
+              log('✅ 已清除登录信息并退出 Windsurf', 'info');
+              showToast('已退出登录，请更换有效秘钥', 'warning');
+            } else {
+              log(`⚠️ 清除登录信息失败: ${result.message}`, 'warning');
+            }
+          } catch (e) {
+            console.error('清除登录信息失败:', e);
+          }
+          return; // 退出后不再继续执行
+        }
         
         // Pro卡密下隐藏当前账号和Token行
         const accountRow = document.getElementById('current-account-row');
@@ -690,6 +720,31 @@ async function checkKeyStatus() {
     if (tokenRow) tokenRow.style.display = isPro ? 'none' : '';
     
     log(`✅ 秘钥状态: ${statusLabel}${isPro ? ' (Pro卡密)' : ''}`, 'success');
+    
+    // 秘钥未激活或已过期时，清除登录信息并退出 Windsurf
+    if (!isActive && (status === 'inactive' || status === 'expired')) {
+      const statusMsg = status === 'expired' ? '已过期' : '未激活';
+      log(`⚠️ 秘钥${statusMsg}，正在清除登录信息并退出 Windsurf...`, 'warning');
+      
+      await showModal(
+        `秘钥${statusMsg}`,
+        `检测到您的秘钥${statusMsg}。\n\n为保证正常使用，将清除登录信息并退出当前 Windsurf 账号。请续费或更换有效秘钥后重新使用。`,
+        { showCancel: false, confirmText: '我知道了' }
+      );
+      
+      try {
+        const result = await window.electronAPI.clearWindsurfAuth();
+        if (result.success) {
+          log('✅ 已清除登录信息并退出 Windsurf', 'info');
+          showToast('已退出登录，请更换有效秘钥', 'warning');
+        } else {
+          log(`⚠️ 清除登录信息失败: ${result.message}`, 'warning');
+        }
+      } catch (e) {
+        console.error('清除登录信息失败:', e);
+      }
+      return; // 退出后不再继续执行
+    }
     
     // 剩余时间（兼容老字段）
     if (data.remaining_time) {
@@ -2302,6 +2357,11 @@ function createPluginCard(plugin) {
             <i data-lucide="trash"></i>
             <span>清理全局数据</span>
           </button>
+          <div style="border-top: 1px solid #e5e7eb; margin: 4px 0;"></div>
+          <button class="dropdown-item" id="file-protection-btn" title="保护 Token 文件，防止其他程序读取" onclick="toggleFileProtection(); closeMoreActionsMenu();">
+            <i data-lucide="shield"></i>
+            <span>Token 保护</span>
+          </button>
         </div>
       </div>
       <button id="refresh-plugin-status-btn-${pluginId}" class="icon-btn" title="刷新状态" onclick="checkPluginStatus('${pluginId}')">
@@ -3159,6 +3219,100 @@ async function clearWindsurfGlobalData() {
     }
   }
 }
+
+// ==================== Token 文件保护 ====================
+
+// 切换文件保护状态
+async function toggleFileProtection() {
+  log('🛡️ 检查 Token 保护状态...', 'info');
+  showToast('正在检查保护状态...', 'info');
+  
+  try {
+    // 先检查当前保护状态
+    const statusResult = await window.electronAPI.checkFileProtectionStatus();
+    
+    if (!statusResult.success) {
+      showToast(`检查状态失败: ${statusResult.message}`, 'error');
+      return;
+    }
+    
+    const isProtected = statusResult.data?.isProtected || false;
+    
+    if (isProtected) {
+      // 当前已保护，询问是否取消保护
+      const confirmed = await showModal(
+        '🛡️ Token 保护已启用',
+        '当前 Token 文件已受到保护。\n\n' +
+        '保护机制：\n' +
+        '• 已限制文件访问权限（仅当前用户可读取）\n' +
+        '• 其他程序无法读取您的 Token\n\n' +
+        '是否要禁用保护？',
+        '禁用保护',
+        '保持启用'
+      );
+      
+      if (confirmed) {
+        showToast('正在禁用保护...', 'info');
+        const result = await window.electronAPI.disableFileProtection();
+        
+        if (result.success) {
+          showToast('✅ Token 保护已禁用', 'success');
+          log('🔓 Token 保护已禁用', 'success');
+        } else {
+          showToast(`禁用失败: ${result.message}`, 'error');
+        }
+      }
+    } else {
+      // 当前未保护，询问是否启用保护
+      const confirmed = await showModal(
+        '🛡️ 启用 Token 保护',
+        '此功能将保护您的 Windsurf Token 文件：\n\n' +
+        '保护机制：\n' +
+        '• 设置严格的文件访问权限（NTFS ACL）\n' +
+        '• 仅允许当前 Windows 用户访问\n' +
+        '• 阻止其他程序读取您的 Token\n\n' +
+        '⚠️ 注意：\n' +
+        '• 仅支持 Windows 系统\n' +
+        '• 不会影响 Windsurf 正常运行\n' +
+        '• 可随时禁用恢复默认权限\n\n' +
+        '是否启用保护？',
+        '启用保护',
+        '取消'
+      );
+      
+      if (confirmed) {
+        showToast('正在启用保护...', 'info');
+        const result = await window.electronAPI.enableFileProtection();
+        
+        if (result.success) {
+          showToast('✅ Token 保护已启用', 'success');
+          log('🛡️ Token 保护已启用', 'success');
+          
+          if (result.data?.protected?.length > 0) {
+            log('已保护的文件:', 'info');
+            result.data.protected.forEach(f => log(`  ✓ ${f}`, 'success'));
+          }
+          
+          await showModal(
+            '✅ 保护已启用',
+            'Token 文件已受到保护！\n\n' +
+            '• 其他程序将无法读取您的 Token\n' +
+            '• Windsurf 仍可正常运行\n\n' +
+            '如需禁用保护，请再次点击"Token 保护"按钮。'
+          );
+        } else {
+          showToast(`启用失败: ${result.message}`, 'error');
+          log(`❌ 启用保护失败: ${result.message}`, 'error');
+        }
+      }
+    }
+  } catch (error) {
+    showToast(`操作失败: ${error.message}`, 'error');
+    log(`❌ Token 保护操作失败: ${error.message}`, 'error');
+  }
+}
+
+// ==================== Token 文件保护结束 ====================
 
 // 安装 AI 规则（强制 AI 使用 ask_continue 工具）
 async function installAIRules() {

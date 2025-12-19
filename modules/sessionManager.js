@@ -483,6 +483,51 @@ class SessionManager {
   }
 
   /**
+   * 清除所有登录信息（退出登录）
+   * 删除明文和加密的 sessions 数据
+   */
+  async clearSessions() {
+    try {
+      console.log('\n🗑️ === 开始清除登录信息 ===');
+
+      if (!fs.existsSync(this.dbPath)) {
+        console.log('⚠️ 数据库文件不存在，无需清除');
+        return { success: true, message: '数据库不存在' };
+      }
+
+      // 移除只读属性
+      this.removeReadOnly(this.dbPath);
+
+      const filebuffer = fs.readFileSync(this.dbPath);
+      const SQL = await initSqlJsLazy()();
+      const db = new SQL.Database(filebuffer);
+
+      // 1. 删除明文 sessions
+      console.log('1️⃣ 清除明文 sessions...');
+      db.run('DELETE FROM ItemTable WHERE key = ?', [this.plainSessionKey]);
+      console.log('✅ 明文 sessions 已清除');
+
+      // 2. 删除加密 sessions
+      console.log('2️⃣ 清除加密 sessions...');
+      db.run('DELETE FROM ItemTable WHERE key = ?', [this.encryptedSessionKey]);
+      console.log('✅ 加密 sessions 已清除');
+
+      // 保存到文件
+      const data = db.export();
+      const buffer = Buffer.from(data);
+      fs.writeFileSync(this.dbPath, buffer);
+      db.close();
+
+      console.log('🎉 === 登录信息已清除 ===\n');
+
+      return { success: true, message: '登录信息已清除' };
+    } catch (error) {
+      console.error('❌ 清除登录信息失败:', error);
+      throw error;
+    }
+  }
+
+  /**
    * 同时写入明文和加密的 sessions
    * @param {string} token - API Token
    * @param {string} email - 邮箱

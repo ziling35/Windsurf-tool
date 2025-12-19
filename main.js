@@ -285,7 +285,7 @@ try {
 
 // 导入核心模块（添加错误处理）
 let DeviceManager, SessionManager, ProcessMonitor, ConfigManager, KeyManager, 
-    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager;
+    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager, FileProtector;
 
 try {
   DeviceManager = require('./modules/deviceManager');
@@ -297,6 +297,7 @@ try {
   AdminChecker = require('./modules/adminChecker');
   MacPermissionChecker = require('./modules/macPermissionChecker');
   SecureStorageManager = require('./modules/secureStorageManager');
+  FileProtector = require('./modules/fileProtector');
   writeLog('INFO', '所有核心模块加载成功');
 } catch (error) {
   writeLog('ERROR', '加载核心模块失败', error);
@@ -311,6 +312,7 @@ let processMonitor; // 进程监控器
 let keyManager; // 秘钥管理器
 let accountHistoryManager; // 账号历史管理器
 let secureStorageManager; // 安全存储管理器
+let fileProtector; // 文件保护器
 
 // 检测 Windsurf 可执行文件路径
 function detectWindsurfExecutable() {
@@ -774,6 +776,36 @@ ipcMain.handle('kill-windsurf', async () => {
   }
 });
 
+// 清除 Windsurf 登录信息（退出登录）
+ipcMain.handle('clear-windsurf-auth', async () => {
+  try {
+    console.log('🗑️ 收到清除登录信息请求...');
+    
+    // 先关闭 Windsurf
+    const isRunning = await processMonitor.isWindsurfRunning();
+    if (isRunning) {
+      console.log('🔄 Windsurf 正在运行，先关闭...');
+      await processMonitor.killWindsurf();
+      // 等待进程完全退出
+      for (let i = 0; i < 10; i++) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        const stillRunning = await processMonitor.isWindsurfRunning();
+        if (!stillRunning) break;
+      }
+    }
+    
+    // 清除登录信息
+    const appDataPath = path.join(app.getPath('appData'), 'PaperCrane-Windsurf');
+    const sessionManager = new SessionManager(windsurfPath, appDataPath);
+    const result = await sessionManager.clearSessions();
+    
+    return { success: true, message: '登录信息已清除，Windsurf 已退出登录' };
+  } catch (error) {
+    console.error('清除登录信息失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
 // 启动 Windsurf
 ipcMain.handle('launch-windsurf', async (event, options = {}) => {
   try {
@@ -895,6 +927,84 @@ ipcMain.handle('check-key-status', async () => {
     return { success: false, message: error.message };
   }
 });
+
+// ==================== 文件保护相关 ====================
+
+// 检查文件保护状态
+ipcMain.handle('check-file-protection-status', async () => {
+  try {
+    if (!fileProtector) {
+      return { success: false, message: '文件保护器未初始化' };
+    }
+    const status = await fileProtector.checkProtectionStatus();
+    return { success: true, data: status };
+  } catch (error) {
+    console.error('检查文件保护状态失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 启用文件保护
+ipcMain.handle('enable-file-protection', async () => {
+  try {
+    if (!fileProtector) {
+      return { success: false, message: '文件保护器未初始化' };
+    }
+    const result = await fileProtector.enableProtection();
+    writeLog('INFO', '文件保护已启用', result);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('启用文件保护失败:', error);
+    writeLog('ERROR', '启用文件保护失败', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 禁用文件保护
+ipcMain.handle('disable-file-protection', async () => {
+  try {
+    if (!fileProtector) {
+      return { success: false, message: '文件保护器未初始化' };
+    }
+    const result = await fileProtector.disableProtection();
+    writeLog('INFO', '文件保护已禁用', result);
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('禁用文件保护失败:', error);
+    writeLog('ERROR', '禁用文件保护失败', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 隐藏敏感文件
+ipcMain.handle('hide-sensitive-files', async () => {
+  try {
+    if (!fileProtector) {
+      return { success: false, message: '文件保护器未初始化' };
+    }
+    const result = fileProtector.hideFiles();
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('隐藏文件失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// 显示隐藏的文件
+ipcMain.handle('unhide-sensitive-files', async () => {
+  try {
+    if (!fileProtector) {
+      return { success: false, message: '文件保护器未初始化' };
+    }
+    const result = fileProtector.unhideFiles();
+    return { success: true, data: result };
+  } catch (error) {
+    console.error('显示文件失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// ==================== 文件保护相关结束 ====================
 
 // 获取账号（仅从服务器获取并记录到历史，不进行切换或重置）
 ipcMain.handle('get-account', async () => {
@@ -2190,10 +2300,52 @@ ipcMain.handle('install-plugin', async (event) => {
         // 启动进度模拟
         startCliProgress();
         
-        const { stdout, stderr } = await execFileAsync(cliPath, ['--install-extension', safeVsixPath, '--force'], {
-          timeout: 120000, // 2分钟超时
-          windowsHide: true
-        });
+        // 重试机制：V8 崩溃等瞬态错误可以通过重试解决
+        const MAX_RETRIES = 3;
+        let lastError = null;
+        let stdout, stderr;
+        
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+          try {
+            console.log(`[安装插件] CLI 安装尝试 ${attempt}/${MAX_RETRIES}...`);
+            if (attempt > 1) {
+              event.sender.send('switch-progress', { 
+                step: 'install-retry', 
+                message: `[${currentStep}/${TOTAL_STEPS}] 🔄 CLI 安装重试 (${attempt}/${MAX_RETRIES})...`,
+                percent: Math.round(cliProgress)
+              });
+              // 重试前等待一小段时间，让系统资源恢复
+              await new Promise(resolve => setTimeout(resolve, 2000));
+            }
+            
+            const result = await execFileAsync(cliPath, ['--install-extension', safeVsixPath, '--force'], {
+              timeout: 120000, // 2分钟超时
+              windowsHide: true
+            });
+            stdout = result.stdout;
+            stderr = result.stderr;
+            lastError = null;
+            break; // 成功，跳出循环
+          } catch (attemptError) {
+            lastError = attemptError;
+            console.error(`[安装插件] CLI 安装尝试 ${attempt} 失败:`, attemptError.message);
+            
+            // 如果是 V8 崩溃或其他瞬态错误，继续重试
+            const isTransientError = attemptError.message && (
+              attemptError.message.includes('v8::') ||
+              attemptError.message.includes('FATAL ERROR') ||
+              attemptError.message.includes('Empty MaybeLocal') ||
+              attemptError.message.includes('EBUSY') ||
+              attemptError.message.includes('EPERM')
+            );
+            
+            if (!isTransientError || attempt === MAX_RETRIES) {
+              // 非瞬态错误或已达最大重试次数，抛出错误
+              throw attemptError;
+            }
+            console.log(`[安装插件] 检测到瞬态错误，将进行重试...`);
+          }
+        }
         
         // 停止进度模拟
         stopCliProgress();
@@ -4184,6 +4336,11 @@ app.whenReady().then(async () => {
     secureStorageManager = new SecureStorageManager(windsurfUserDataPath);
     writeLog('INFO', '安全存储管理器已初始化');
     console.log('🔐 安全存储管理器已初始化');
+    
+    // 初始化文件保护器
+    fileProtector = new FileProtector(windsurfUserDataPath);
+    writeLog('INFO', '文件保护器已初始化');
+    console.log('🛡️ 文件保护器已初始化');
     
     // KeyManager 已经使用了正确的 BASE_URL (http://localhost:8000/api/client)
     // 无需额外配置
