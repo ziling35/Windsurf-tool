@@ -4245,6 +4245,26 @@ document.addEventListener('DOMContentLoaded', async () => {
   document.getElementById('hot-switch-btn')?.addEventListener('click', hotSwitch);
   document.getElementById('reset-device-switch-btn')?.addEventListener('click', () => resetDeviceIds(false, 'switch'));
   
+  // 刷新历史账号按钮
+  document.getElementById('refresh-history-btn')?.addEventListener('click', async () => {
+    const btn = document.getElementById('refresh-history-btn');
+    if (btn) {
+      btn.disabled = true;
+      btn.classList.add('loading');
+    }
+    try {
+      await loadAccountHistory();
+      showToast('历史账号已刷新', 'success');
+    } catch (error) {
+      showToast('刷新失败: ' + error.message, 'error');
+    } finally {
+      if (btn) {
+        btn.disabled = false;
+        btn.classList.remove('loading');
+      }
+    }
+  });
+  
   // 手动输入弹窗
   document.getElementById('manual-input-cancel')?.addEventListener('click', hideManualInputModal);
   document.getElementById('manual-input-confirm')?.addEventListener('click', manualSwitchAccount);
