@@ -7,6 +7,9 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 // 暴露安全的 API 给渲染进程
 contextBridge.exposeInMainWorld('electronAPI', {
+  // 获取管理员权限状态
+  getAdminStatus: () => ipcRenderer.invoke('get-admin-status'),
+  
   // 获取应用版本号（从 package.json 读取）
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   

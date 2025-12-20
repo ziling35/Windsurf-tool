@@ -8,6 +8,28 @@
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const { execSync } = require('child_process');
+
+// 检测是否以管理员权限运行
+let isRunningAsAdmin = false;
+function checkAdminPrivileges() {
+  if (process.platform === 'win32') {
+    try {
+      // Windows: 尝试执行 net session 命令，只有管理员才能成功
+      execSync('net session', { stdio: 'ignore' });
+      isRunningAsAdmin = true;
+    } catch (e) {
+      isRunningAsAdmin = false;
+    }
+  } else {
+    // macOS/Linux: 检测 uid 是否为 0
+    isRunningAsAdmin = process.getuid && process.getuid() === 0;
+  }
+  return isRunningAsAdmin;
+}
+
+// 启动时检测管理员权限
+checkAdminPrivileges();
 
  function sleep(ms) {
    return new Promise(resolve => setTimeout(resolve, ms));
@@ -501,6 +523,15 @@ function createWindow() {
 }
 
 // ===== IPC 处理器 =====
+
+// 获取管理员权限状态
+ipcMain.handle('get-admin-status', async () => {
+  return { 
+    success: true, 
+    isAdmin: isRunningAsAdmin,
+    platform: process.platform
+  };
+});
 
 // 获取应用版本号（从 package.json 读取）
 ipcMain.handle('get-app-version', async () => {
@@ -4356,6 +4387,26 @@ app.whenReady().then(async () => {
     await installGlobalAiRulesOnStartup();
     
     createWindow();
+    
+    // Windows 系统检查管理员权限
+    if (process.platform === 'win32' && !isRunningAsAdmin) {
+      setTimeout(async () => {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          title: '权限提示',
+          message: '当前未以管理员身份运行',
+          detail: '建议以管理员身份运行本程序，否则部分功能（如重置设备码、修改系统文件等）可能无法正常工作。\n\n右键点击程序 → 选择"以管理员身份运行"',
+          buttons: ['我知道了', '退出并手动以管理员运行'],
+          defaultId: 0,
+          cancelId: 0
+        });
+        
+        if (response === 1) {
+          // 用户选择退出
+          app.quit();
+        }
+      }, 800);
+    }
   } catch (error) {
     writeLog('ERROR', 'App 初始化失败', error);
     dialog.showErrorBox('初始化失败', `应用初始化失败:\n${error.message}\n\n日志文件: ${logFile}`);

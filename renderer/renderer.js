@@ -505,7 +505,18 @@ async function loadKeyInfo(skipStatusCheck = false) {
       if (statusResult.success) {
         // 查询成功，显示激活状态
         const data = statusResult.data || {};
-        const status = data.status || data.Status;
+        let status = data.status || data.Status;
+        
+        // 优先根据 expires_at 时间判断是否过期（客户端本地检测）
+        const expiresAt = data.expires_at || data.expiresAt;
+        if (expiresAt) {
+          const expiresTime = new Date(expiresAt).getTime();
+          const now = Date.now();
+          if (now >= expiresTime) {
+            status = 'expired';
+            log('⚠️ 根据 expires_at 时间判断：密钥已过期', 'warning');
+          }
+        }
         
         let statusLabel = '已激活';
         let isActive = true;
@@ -693,9 +704,22 @@ async function checkKeyStatus() {
     const data = result.data || {};
     
     // 状态映射（兼容老字段）
-    const status = data.status || data.Status;
+    let status = data.status || data.Status;
     let statusLabel = '未知';
     let isActive = false;
+    
+    // 优先根据 expires_at 时间判断是否过期（客户端本地检测）
+    const expiresAt = data.expires_at || data.expiresAt;
+    if (expiresAt) {
+      const expiresTime = new Date(expiresAt).getTime();
+      const now = Date.now();
+      if (now >= expiresTime) {
+        // 时间已过期，强制设置状态为 expired
+        status = 'expired';
+        log('⚠️ 根据 expires_at 时间判断：密钥已过期', 'warning');
+      }
+    }
+    
     if (status === 'active') { statusLabel = '已激活'; isActive = true; }
     else if (status === 'inactive') { statusLabel = '未激活'; }
     else if (status === 'expired') { statusLabel = '已过期'; }
@@ -4007,6 +4031,33 @@ document.addEventListener('DOMContentLoaded', async () => {
   const versionElement = document.querySelector('.sidebar-version');
   if (versionElement) {
     versionElement.textContent = `v${CLIENT_VERSION}`;
+  }
+  
+  // 检测并显示管理员权限状态
+  try {
+    const adminResult = await window.electronAPI.getAdminStatus();
+    const adminStatusEl = document.getElementById('admin-status');
+    const adminStatusText = document.getElementById('admin-status-text');
+    if (adminStatusEl && adminStatusText) {
+      adminStatusEl.style.display = 'block';
+      if (adminResult.isAdmin) {
+        adminStatusEl.style.background = 'linear-gradient(135deg, #dcfce7 0%, #bbf7d0 100%)';
+        adminStatusEl.style.color = '#166534';
+        adminStatusEl.style.border = '1px solid #86efac';
+        adminStatusText.textContent = '以管理员身份运行';
+        log('✅ 当前以管理员权限运行', 'success');
+      } else {
+        adminStatusEl.style.background = 'linear-gradient(135deg, #fef3c7 0%, #fde68a 100%)';
+        adminStatusEl.style.color = '#92400e';
+        adminStatusEl.style.border = '1px solid #fcd34d';
+        adminStatusText.textContent = '非管理员运行';
+        log('⚠️ 当前未以管理员权限运行，部分功能可能受限', 'warning');
+      }
+      // 刷新图标
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  } catch (err) {
+    console.error('检测管理员权限失败:', err);
   }
   
   // 首先检查版本
