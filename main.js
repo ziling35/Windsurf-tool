@@ -1605,13 +1605,60 @@ async function checkPluginStatusInternal() {
     let pluginVersion = null;
     let pluginReason = null;
     
+    console.log('[插件检测] ========== 开始插件检测 ==========');
     console.log('[插件检测] 检查扩展目录:', extensionsPath);
     console.log('[插件检测] 目录是否存在:', fs.existsSync(extensionsPath));
     
-    // 检查插件是否已安装（严格校验：目录存在 + package.json 有效 + MCP 服务器文件存在）
+    // 清理无效的插件目录（空目录或缺少关键文件的目录）
     if (fs.existsSync(extensionsPath)) {
       const extensions = fs.readdirSync(extensionsPath);
+      console.log('[插件检测] 扫描到的所有扩展:', extensions);
+      for (const ext of extensions) {
+        const isOur = isOurPlugin(ext);
+        console.log(`[插件检测] 检查 ${ext}: 是否是我们的插件 = ${isOur}`);
+        if (isOur) {
+          const extPath = path.join(extensionsPath, ext);
+          try {
+            const stats = fs.statSync(extPath);
+            if (stats.isDirectory()) {
+              const contents = fs.readdirSync(extPath);
+              // 检查目录是否为空或缺少关键文件
+              const hasPackageJson = fs.existsSync(path.join(extPath, 'package.json'));
+              const hasExtensionJson = fs.existsSync(path.join(extPath, 'extension.json'));
+              
+              // 目录必须不为空且至少有 package.json 才算有效
+              if (contents.length === 0 || !hasPackageJson) {
+                console.log(`[插件检测] 清理无效插件目录: ${ext}`);
+                console.log(`  - 目录为空: ${contents.length === 0}`);
+                console.log(`  - 缺少 package.json: ${!hasPackageJson}`);
+                console.log(`  - 缺少 extension.json: ${!hasExtensionJson}`);
+                
+                try {
+                  // 尝试删除无效目录
+                  const delResult = await removePathWithRetries(extPath, { isDir: true });
+                  if (delResult.removed) {
+                    console.log(`[插件检测] ✅ 已删除无效目录: ${ext}`);
+                  } else {
+                    console.log(`[插件检测] ⚠️ 无法删除无效目录: ${ext}`, delResult.error?.message);
+                  }
+                } catch (delErr) {
+                  console.error(`[插件检测] 删除无效目录失败: ${ext}`, delErr);
+                }
+              }
+            }
+          } catch (err) {
+            console.error(`[插件检测] 检查目录失败: ${ext}`, err);
+          }
+        }
+      }
+    }
+    
+    // 检查插件是否已安装（严格校验：目录存在 + package.json 有效 + MCP 服务器文件存在）
+    if (fs.existsSync(extensionsPath)) {
+      // 重新读取目录（因为可能已经清理了一些无效目录）
+      const extensions = fs.readdirSync(extensionsPath);
       console.log('[插件检测] 扩展目录中的所有插件:', extensions);
+      console.log('[插件检测] ========== 正在查找我们的插件 ==========');
 
       const candidateDirs = extensions
         .filter(ext => isOurPlugin(ext))
@@ -1628,38 +1675,71 @@ async function checkPluginStatusInternal() {
         console.log('[插件检测] ❌ 未找到匹配的插件');
       } else {
         console.log('[插件检测] 选择的插件:', selected.name);
-        const packageJsonPath = path.join(selected.fullPath, 'package.json');
-        console.log('[插件检测] 检查 package.json:', packageJsonPath);
-        console.log('[插件检测] package.json 是否存在:', fs.existsSync(packageJsonPath));
         
-        const pkg = readJsonSafe(packageJsonPath);
-        if (!pkg.ok) {
-          pluginReason = `找到插件目录但 package.json 无效: ${selected.name}`;
-          console.log('[插件检测] ❌ package.json 无效');
+        // 首先检查目录是否真的存在且不为空
+        const dirStats = fs.statSync(selected.fullPath);
+        if (!dirStats.isDirectory()) {
+          pluginReason = `路径不是目录: ${selected.name}`;
+          console.log('[插件检测] ❌ 路径不是有效目录');
         } else {
-          pluginId = pkg.data?.name || null;
-          pluginVersion = pkg.data?.version || selected.version || null;
-          console.log('[插件检测] 插件 ID:', pluginId);
-          console.log('[插件检测] 插件版本:', pluginVersion);
-
-          // 插件需包含 MCP server 文件才算"安装完整"
-          const mcpServerPath1 = path.join(selected.fullPath, 'out', 'mcpServerStandalone.js');
-          const mcpServerPath2 = path.join(selected.fullPath, 'mcp-server.js');
-          console.log('[插件检测] 检查 MCP 服务器文件:');
-          console.log('  - 路径1:', mcpServerPath1, '存在:', fs.existsSync(mcpServerPath1));
-          console.log('  - 路径2:', mcpServerPath2, '存在:', fs.existsSync(mcpServerPath2));
+          // 检查目录是否为空（插件被卸载后可能留下空目录）
+          const dirContents = fs.readdirSync(selected.fullPath);
+          console.log('[插件检测] 目录内容数量:', dirContents.length);
           
-          const hasMcpServer = fs.existsSync(mcpServerPath1) || fs.existsSync(mcpServerPath2);
-
-          if (!hasMcpServer) {
-            pluginReason = `插件目录存在但缺少 MCP 服务器文件: ${selected.name}`;
-            console.log('[插件检测] ❌ MCP 服务器文件不存在');
+          if (dirContents.length === 0) {
+            pluginReason = `插件目录为空（可能已卸载）: ${selected.name}`;
+            console.log('[插件检测] ❌ 插件目录为空');
           } else {
-            pluginInstalled = true;
-            pluginPath = selected.fullPath;
-            pluginReason = `已安装: ${selected.name}`;
-            console.log('[插件检测] ✅ 插件检测通过');
-            console.log('[插件检测] 插件路径:', pluginPath);
+            // 检查关键文件是否存在
+            const packageJsonPath = path.join(selected.fullPath, 'package.json');
+            const extensionJsonPath = path.join(selected.fullPath, 'extension.json');
+            console.log('[插件检测] 检查 package.json:', packageJsonPath);
+            console.log('[插件检测] package.json 是否存在:', fs.existsSync(packageJsonPath));
+            console.log('[插件检测] extension.json 是否存在:', fs.existsSync(extensionJsonPath));
+            
+            // 检查 package.json 是否存在（extension.json 是可选的）
+            if (!fs.existsSync(packageJsonPath)) {
+              pluginReason = `插件目录不完整（缺少 package.json）: ${selected.name}`;
+              console.log('[插件检测] ❌ 缺少 package.json');
+            } else {
+              const pkg = readJsonSafe(packageJsonPath);
+              if (!pkg.ok) {
+                pluginReason = `找到插件目录但 package.json 无效: ${selected.name}`;
+                console.log('[插件检测] ❌ package.json 无效');
+              } else {
+                pluginId = pkg.data?.name || null;
+                pluginVersion = pkg.data?.version || selected.version || null;
+                console.log('[插件检测] 插件 ID:', pluginId);
+                console.log('[插件检测] 插件版本:', pluginVersion);
+
+                // 插件需包含 MCP server 文件才算"安装完整"
+                const mcpServerPath1 = path.join(selected.fullPath, 'out', 'mcpServerStandalone.js');
+                const mcpServerPath2 = path.join(selected.fullPath, 'mcp-server.js');
+                console.log('[插件检测] 检查 MCP 服务器文件:');
+                console.log('  - 路径1:', mcpServerPath1, '存在:', fs.existsSync(mcpServerPath1));
+                console.log('  - 路径2:', mcpServerPath2, '存在:', fs.existsSync(mcpServerPath2));
+                
+                const hasMcpServer = fs.existsSync(mcpServerPath1) || fs.existsSync(mcpServerPath2);
+
+                if (!hasMcpServer) {
+                  pluginReason = `插件目录存在但缺少 MCP 服务器文件: ${selected.name}`;
+                  console.log('[插件检测] ❌ MCP 服务器文件不存在');
+                } else {
+                  // 最后检查：确保插件主文件存在
+                  const mainPath = pkg.data?.main ? path.join(selected.fullPath, pkg.data.main) : null;
+                  if (mainPath && !fs.existsSync(mainPath)) {
+                    pluginReason = `插件主文件缺失: ${selected.name}`;
+                    console.log('[插件检测] ❌ 插件主文件不存在:', mainPath);
+                  } else {
+                    pluginInstalled = true;
+                    pluginPath = selected.fullPath;
+                    pluginReason = `已安装: ${selected.name}`;
+                    console.log('[插件检测] ✅ 插件检测通过');
+                    console.log('[插件检测] 插件路径:', pluginPath);
+                  }
+                }
+              }
+            }
           }
         }
       }
@@ -1707,6 +1787,23 @@ async function checkPluginStatusInternal() {
       mcpConfigReason = '配置文件不存在';
     }
     
+    // 如果插件未安装，自动清除 Windsurf 账号
+    if (!pluginInstalled) {
+      console.log('[插件检测] ⚠️ 插件未安装，准备清除 Windsurf 账号...');
+      
+      // 执行清除操作
+      try {
+        const clearResult = await clearWindsurfSessionInternal();
+        if (clearResult.success) {
+          console.log('[插件检测] ✅ Windsurf 账号已清除');
+        } else {
+          console.log('[插件检测] ❌ 清除账号失败:', clearResult.message);
+        }
+      } catch (clearError) {
+        console.error('[插件检测] 清除账号异常:', clearError);
+      }
+    }
+    
     return {
       success: true,
       data: {
@@ -1716,13 +1813,81 @@ async function checkPluginStatusInternal() {
         pluginVersion,
         pluginReason,
         mcpConfigured,
-        mcpConfigPath,
         mcpConfigReason,
         resolvedMcpServerPath
       }
     };
   } catch (error) {
     console.error('检测插件状态失败:', error);
+    return { success: false, message: error.message };
+  }
+}
+
+/**
+ * 清除 Windsurf 账号 session
+ */
+async function clearWindsurfSessionInternal() {
+  try {
+    console.log('[清除账号] 开始清除 Windsurf 账号...');
+    
+    const windsurfPath = path.join(app.getPath('home'), 'AppData', 'Roaming', 'Windsurf');
+    const dbPath = path.join(windsurfPath, 'User', 'globalStorage', 'state.vscdb');
+    
+    if (!fs.existsSync(dbPath)) {
+      console.log('[清除账号] state.vscdb 不存在');
+      return { success: true, message: '数据库不存在' };
+    }
+    
+    // 备份数据库
+    const backupPath = dbPath + '.backup-' + Date.now();
+    fs.copyFileSync(dbPath, backupPath);
+    console.log('[清除账号] 已备份数据库');
+    
+    try {
+      // 动态加载 sql.js
+      const initSqlJs = require('sql.js');
+      const SQL = await initSqlJs();
+      
+      // 读取数据库
+      const filebuffer = fs.readFileSync(dbPath);
+      const db = new SQL.Database(filebuffer);
+      
+      // 删除所有 session 相关的 keys
+      const keysToDelete = [
+        'codeium.windsurf',
+        'secret://{"extensionId":"codeium.windsurf","key":"windsurf_auth.sessions"}'
+      ];
+      
+      keysToDelete.forEach(key => {
+        db.run('DELETE FROM ItemTable WHERE key = ?', [key]);
+        console.log(`[清除账号] 已删除: ${key}`);
+      });
+      
+      // 保存数据库
+      const data = db.export();
+      fs.writeFileSync(dbPath, Buffer.from(data));
+      db.close();
+      
+      console.log('[清除账号] ✅ 数据库 session 已清除');
+      
+      // 清理密钥文件
+      const keyPath = path.join(windsurfPath, 'windsurf-pro-key.json');
+      if (fs.existsSync(keyPath)) {
+        fs.unlinkSync(keyPath);
+        console.log('[清除账号] ✅ 已删除密钥文件');
+      }
+      
+      return { success: true, message: 'Windsurf 账号已清除' };
+    } catch (error) {
+      // 恢复备份
+      if (fs.existsSync(backupPath)) {
+        fs.copyFileSync(backupPath, dbPath);
+        console.log('[清除账号] 已恢复备份');
+      }
+      throw error;
+    }
+  } catch (error) {
+    console.error('[清除账号] 清除失败:', error);
     return { success: false, message: error.message };
   }
 }
@@ -1735,8 +1900,8 @@ ipcMain.handle('check-plugin-status', async () => {
 // 安装插件（自动关闭 Windsurf 并清除旧缓存）
 ipcMain.handle('install-plugin', async (event) => {
   try {
-    // 总共8个主要步骤
-    const TOTAL_STEPS = 8;
+    // 总共12个主要步骤
+    const TOTAL_STEPS = 12;
     let currentStep = 0;
     
     const sendProgress = (stepName, message) => {
@@ -4444,6 +4609,62 @@ app.whenReady().then(async () => {
       createWindow();
     }
   });
+});
+
+// 在应用退出前清理 Windsurf 登录信息
+app.on('before-quit', async (event) => {
+  try {
+    console.log('[App] 应用即将退出，开始清理 Windsurf 登录信息...');
+    writeLog('INFO', '应用退出前清理 Windsurf 登录信息');
+    
+    // 阻止默认退出行为，等待清理完成
+    event.preventDefault();
+    
+    // 调用退出 Windsurf 账号的逻辑
+    const windsurfPath = getWindsurfDataPath();
+    const dbPath = path.join(windsurfPath, 'User', 'globalStorage', 'state.vscdb');
+    
+    if (fs.existsSync(dbPath)) {
+      try {
+        // 动态加载 sql.js
+        const initSqlJs = require('sql.js');
+        const SQL = await initSqlJs();
+        
+        // 读取数据库
+        const filebuffer = fs.readFileSync(dbPath);
+        const db = new SQL.Database(filebuffer);
+        
+        // 删除 session 数据
+        const plainSessionKey = 'codeium.windsurf';
+        const encryptedSessionKey = 'secret://{"extensionId":"codeium.windsurf","key":"windsurf_auth.sessions"}';
+        
+        db.run('DELETE FROM ItemTable WHERE key = ?', [plainSessionKey]);
+        db.run('DELETE FROM ItemTable WHERE key = ?', [encryptedSessionKey]);
+        
+        // 保存到文件
+        const data = db.export();
+        const buffer = Buffer.from(data);
+        fs.writeFileSync(dbPath, buffer);
+        db.close();
+        
+        console.log('[App] ✅ Windsurf 登录信息已清除');
+        writeLog('INFO', 'Windsurf 登录信息清除成功');
+      } catch (error) {
+        console.error('[App] ❌ 清除 Windsurf 登录信息失败:', error);
+        writeLog('ERROR', '清除 Windsurf 登录信息失败', error);
+      }
+    } else {
+      console.log('[App] state.vscdb 不存在，跳过清理');
+    }
+    
+    // 清理完成后真正退出
+    app.exit(0);
+  } catch (error) {
+    console.error('[App] 退出前清理失败:', error);
+    writeLog('ERROR', '退出前清理失败', error);
+    // 即使失败也退出
+    app.exit(1);
+  }
 });
 
 app.on('window-all-closed', () => {

@@ -187,7 +187,7 @@ function showToast(message, type = 'info', duration = 3000) {
 }
 
 // 自定义弹窗
-function showModal(title, message) {
+function showModal(title, message, options = {}) {
   return new Promise((resolve) => {
     const modal = document.getElementById('custom-modal');
     const modalTitle = document.getElementById('modal-title');
@@ -195,10 +195,27 @@ function showModal(title, message) {
     const confirmBtn = document.getElementById('modal-confirm');
     const cancelBtn = document.getElementById('modal-cancel');
     
+    // 处理选项
+    const showCancel = options.showCancel !== false;  // 默认显示取消按钮
+    const confirmText = options.confirmText || '确定';
+    const cancelText = options.cancelText || '取消';
+    
     modalTitle.textContent = title;
     // 使用 <p> 标签包裹，支持长文本换行和滚动
     const formattedMessage = (message || '').replace(/\n/g, '<br>');
     modalMessage.innerHTML = `<p>${formattedMessage}</p>`;
+    
+    // 设置按钮文本
+    confirmBtn.textContent = confirmText;
+    cancelBtn.textContent = cancelText;
+    
+    // 控制取消按钮显示
+    if (showCancel) {
+      cancelBtn.style.display = '';
+    } else {
+      cancelBtn.style.display = 'none';
+    }
+    
     modal.classList.add('show');
     
     const handleConfirm = () => {
@@ -216,6 +233,10 @@ function showModal(title, message) {
     const cleanup = () => {
       confirmBtn.removeEventListener('click', handleConfirm);
       cancelBtn.removeEventListener('click', handleCancel);
+      // 恢复默认设置
+      cancelBtn.style.display = '';
+      confirmBtn.textContent = '确定';
+      cancelBtn.textContent = '取消';
     };
     
     confirmBtn.addEventListener('click', handleConfirm);
@@ -2489,6 +2510,10 @@ async function checkPluginStatus(pluginId = null) {
       if (activateBtn) {
         activateBtn.disabled = false;
       }
+      
+      // 显示插件未安装提醒
+      showToast('⚠️ 检测到插件未安装，已自动清除 Windsurf 账号', 'warning');
+      console.log('[插件检测] 插件未安装，已触发账号清除');
     }
     
     // 更新 MCP 配置状态 - 按钮始终可用，支持重新配置
@@ -4215,13 +4240,17 @@ document.addEventListener('DOMContentLoaded', async () => {
           { showCancel: false, confirmText: '我知道了' }
         );
         
-        // 关闭 Windsurf（退出账号）
+        // 清除登录信息并退出账号
         try {
-          await window.electronAPI.killWindsurf();
-          log('✅ 已退出 Windsurf', 'info');
-          showToast('已退出 Windsurf，请重新安装插件', 'warning');
+          const result = await window.electronAPI.clearWindsurfAuth();
+          if (result.success) {
+            log('✅ 已清除登录信息并退出 Windsurf', 'info');
+            showToast('已退出登录，请重新安装插件后再换号', 'warning');
+          } else {
+            log('⚠️ 退出账号失败: ' + result.message, 'warning');
+          }
         } catch (e) {
-          console.error('关闭 Windsurf 失败:', e);
+          console.error('退出账号失败:', e);
         }
         
         // 刷新插件状态显示
