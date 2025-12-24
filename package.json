@@ -1,6 +1,6 @@
 {
   "name": "papercrane-windsurf",
-  "version": "2.1.3",
+  "version": "2.1.5",
   "description": "PaperCrane-Windsurf 续杯工具",
   "main": "main.js",
   "scripts": {

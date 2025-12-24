@@ -8,6 +8,7 @@
 const { app, BrowserWindow, ipcMain, dialog, safeStorage, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
+const os = require('os');
 const { execSync } = require('child_process');
 
 // 检测是否以管理员权限运行
@@ -16,7 +17,7 @@ function checkAdminPrivileges() {
   if (process.platform === 'win32') {
     try {
       // Windows: 尝试执行 net session 命令，只有管理员才能成功
-      execSync('net session', { stdio: 'ignore' });
+      execSync('net session', { stdio: 'ignore', windowsHide: true });
       isRunningAsAdmin = true;
     } catch (e) {
       isRunningAsAdmin = false;
@@ -307,7 +308,7 @@ try {
 
 // 导入核心模块（添加错误处理）
 let DeviceManager, SessionManager, ProcessMonitor, ConfigManager, KeyManager, 
-    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager, FileProtector;
+    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager, FileProtector, AccountRecognitionMonitor;
 
 try {
   DeviceManager = require('./modules/deviceManager');
@@ -318,6 +319,7 @@ try {
   AccountHistoryManager = require('./modules/accountHistoryManager');
   AdminChecker = require('./modules/adminChecker');
   MacPermissionChecker = require('./modules/macPermissionChecker');
+  AccountRecognitionMonitor = require('./modules/accountRecognitionMonitor');
   SecureStorageManager = require('./modules/secureStorageManager');
   FileProtector = require('./modules/fileProtector');
   writeLog('INFO', '所有核心模块加载成功');
@@ -926,6 +928,23 @@ ipcMain.handle('save-key', async (event, key) => {
       return { success: false, message: '秘钥不能为空' };
     }
 
+    // 获取设备ID和设备名称用于验证
+    const deviceManager = new DeviceManager(windsurfPath);
+    const deviceIds = deviceManager.getCurrentDeviceIds();
+    const deviceId = deviceIds?.machineId || null;
+    const deviceName = os.hostname();
+    
+    console.log('📱 保存密钥时验证设备:');
+    console.log('  设备ID:', deviceId);
+    console.log('  设备名称:', deviceName);
+    
+    // 先验证密钥（通过传递设备信息）
+    const verifyResult = await keyManager.verifyKeyWithDevice(key.trim(), deviceId, deviceName);
+    if (!verifyResult.success) {
+      return { success: false, message: verifyResult.message };
+    }
+    
+    // 验证通过后再保存
     const success = keyManager.saveKey(key.trim());
     if (success) {
       return { success: true, message: '秘钥已保存' };
@@ -1040,6 +1059,10 @@ ipcMain.handle('unhide-sensitive-files', async () => {
 // 获取账号（仅从服务器获取并记录到历史，不进行切换或重置）
 ipcMain.handle('get-account', async () => {
   try {
+    // 不再传递设备信息，因为每次换号都会更换设备ID
+    console.log('📱 获取账号（不验证设备）');
+    
+    // 不传递设备ID和设备名称
     const result = await keyManager.getAccount();
 
     // 如果获取成功且包含邮箱和 API Key，则写入历史记录
@@ -1292,6 +1315,10 @@ ipcMain.handle('switch-account', async (event, accountData) => {
       if (!killResult.wasRunning) {
         closed = true;
         event.sender.send('switch-progress', { step: 'kill-done', message: '✅ 已关闭 Windsurf' });
+      } else if (killResult.adminRequired) {
+        // 管理员权限进程无法关闭
+        event.sender.send('switch-progress', { step: 'error', message: '❌ Windsurf 以管理员身份运行，无法自动关闭' });
+        return { success: false, message: '请手动关闭以管理员身份运行的 Windsurf，然后重试' };
       } else if (killResult.killed) {
         for (let i = 0; i < 6; i++) {
           await new Promise(resolve => setTimeout(resolve, 500));
@@ -1341,23 +1368,50 @@ ipcMain.handle('switch-account', async (event, accountData) => {
       }
       if (exePath) {
         const launched = await processMonitor.launchWindsurf(exePath);
+        console.log(`[DEBUG] launchWindsurf 返回值: ${launched}, exePath: ${exePath}`);
+        
+        // 无论启动是否成功，都继续执行后续流程（避免卡住）
         if (launched) {
-          let started = false;
-          const maxAttempts = 20;
-          for (let i = 0; i < maxAttempts; i++) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            started = await processMonitor.isWindsurfRunning();
-            if (started) break;
-          }
-          
-          if (started) {
-            event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
-          } else {
-            event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
-          }
+          event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已发送启动命令' });
+          console.log('✅ Windsurf 启动命令已执行');
         } else {
-          event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
+          event.sender.send('switch-progress', { step: 'launch-done', message: '⚠️ 启动命令执行失败，但继续监控' });
+          console.log('⚠️ Windsurf 启动命令失败，但继续执行后续流程');
         }
+        
+        // 等待 1 秒让 Windsurf 开始启动
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // 直接启动账号识别监控
+        event.sender.send('switch-progress', { step: 'monitor-start', message: '👁️ 正在监控账号识别状态...' });
+        const monitor = new AccountRecognitionMonitor(windsurfPath, sessionManager);
+        
+        monitor.startMonitoring(
+          (deleteResult) => {
+            // 账号识别成功，已删除本地账号信息
+            if (deleteResult.success) {
+              event.sender.send('switch-progress', { 
+                step: 'account-deleted', 
+                message: '🔒 Windsurf 已识别账号' 
+              });
+              console.log('✅ 账号识别监控完成');
+            } else {
+              event.sender.send('switch-progress', { 
+                step: 'delete-failed', 
+                message: '⚠️ 本地账号信息失败' 
+              });
+              console.error('❌ 本地账号信息失败:', deleteResult.message);
+            }
+          },
+          () => {
+            // 监控超时
+            event.sender.send('switch-progress', { 
+              step: 'monitor-timeout', 
+              message: '⚠️ 账号识别监控超时，请手动检查' 
+            });
+            console.log('⚠️ 账号识别监控超时');
+          }
+        );
       } else {
         event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
       }
@@ -1436,6 +1490,10 @@ ipcMain.handle('switch-to-history-account', async (event, id) => {
         // 本来就没有进程在运行
         closed = true;
         event.sender.send('switch-progress', { step: 'kill-done', message: '✅ 已关闭 Windsurf' });
+      } else if (killResult.adminRequired) {
+        // 管理员权限进程无法关闭
+        event.sender.send('switch-progress', { step: 'error', message: '❌ Windsurf 以管理员身份运行，无法自动关闭' });
+        return { success: false, message: '请手动关闭以管理员身份运行的 Windsurf，然后重试' };
       } else if (killResult.killed) {
         // 轮询确认完全关闭（最多等待 3 秒）
         for (let i = 0; i < 6; i++) {
@@ -1490,23 +1548,50 @@ ipcMain.handle('switch-to-history-account', async (event, id) => {
       }
       if (exePath) {
         const launched = await processMonitor.launchWindsurf(exePath);
+        console.log(`[DEBUG] launchWindsurf 返回值: ${launched}, exePath: ${exePath}`);
+        
+        // 无论启动是否成功，都继续执行后续流程（避免卡住）
         if (launched) {
-          let started = false;
-          const maxAttempts = 20;
-          for (let i = 0; i < maxAttempts; i++) {
-            await new Promise(resolve => setTimeout(resolve, 500));
-            started = await processMonitor.isWindsurfRunning();
-            if (started) break;
-          }
-          
-          if (started) {
-            event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已启动 Windsurf' });
-          } else {
-            event.sender.send('switch-progress', { step: 'warning', message: '⚠️ 启动命令已执行，请等待 Windsurf 完全启动' });
-          }
+          event.sender.send('switch-progress', { step: 'launch-done', message: '✅ 已发送启动命令' });
+          console.log('✅ Windsurf 启动命令已执行');
         } else {
-          event.sender.send('switch-progress', { step: 'error', message: '❌ 启动失败' });
+          event.sender.send('switch-progress', { step: 'launch-done', message: '⚠️ 启动命令执行失败，但继续监控' });
+          console.log('⚠️ Windsurf 启动命令失败，但继续执行后续流程');
         }
+        
+        // 等待 1 秒让 Windsurf 开始启动
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // 直接启动账号识别监控
+        event.sender.send('switch-progress', { step: 'monitor-start', message: '👁️ 正在监控账号识别状态...' });
+        const monitor = new AccountRecognitionMonitor(windsurfPath, sessionManager);
+        
+        monitor.startMonitoring(
+          (deleteResult) => {
+            // 账号识别成功，已删除本地账号信息
+            if (deleteResult.success) {
+              event.sender.send('switch-progress', { 
+                step: 'account-deleted', 
+                message: '🔒 Windsurf 已识别账号，本地账号信息已删除' 
+              });
+              console.log('✅ 账号识别监控完成，本地账号信息已删除');
+            } else {
+              event.sender.send('switch-progress', { 
+                step: 'delete-failed', 
+                message: '⚠️ 删除本地账号信息失败' 
+              });
+              console.error('❌ 删除本地账号信息失败:', deleteResult.message);
+            }
+          },
+          () => {
+            // 监控超时
+            event.sender.send('switch-progress', { 
+              step: 'monitor-timeout', 
+              message: '⚠️ 账号识别监控超时，请手动检查' 
+            });
+            console.log('⚠️ 账号识别监控超时');
+          }
+        );
       } else {
         event.sender.send('switch-progress', { step: 'error', message: '❌ 未找到 Windsurf 可执行文件' });
       }

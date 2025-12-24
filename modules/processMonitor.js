@@ -3,7 +3,7 @@
  * 检测 Windsurf 是否正在运行
  */
 
-const { exec } = require('child_process');
+const { exec, spawn } = require('child_process');
 const util = require('util');
 const execPromise = util.promisify(exec);
 
@@ -61,18 +61,40 @@ class ProcessMonitor {
   async killWindsurf() {
     try {
       if (this.platform === 'win32') {
-        // Windows: 使用 taskkill，捕获输出判断是否有进程被关闭
-        const { stdout, stderr } = await execPromise('taskkill /F /IM Windsurf.exe');
-        const output = (stdout + stderr).toLowerCase();
-        // 如果输出包含"成功"或"已终止"，说明有进程被关闭
-        if (output.includes('成功') || output.includes('已终止') || output.includes('success') || output.includes('terminated')) {
+        // Windows: 先尝试普通 taskkill
+        try {
+          const { stdout, stderr } = await execPromise('taskkill /F /IM Windsurf.exe');
+          const output = (stdout + stderr).toLowerCase();
+          if (output.includes('成功') || output.includes('已终止') || output.includes('success') || output.includes('terminated')) {
+            return { killed: true, wasRunning: true };
+          }
+          if (output.includes('找不到') || output.includes('not found') || output.includes('not running')) {
+            return { killed: true, wasRunning: false };
+          }
+        } catch (normalError) {
+          // 普通权限失败，可能是管理员进程，尝试使用 wmic 或 PowerShell
+          console.log('普通 taskkill 失败，尝试其他方式...');
+        }
+        
+        // 尝试使用 wmic 终止（某些情况下可以绕过权限）
+        try {
+          await execPromise('wmic process where "name=\'Windsurf.exe\'" delete');
+          console.log('✅ 已通过 wmic 关闭 Windsurf');
+          return { killed: true, wasRunning: true };
+        } catch (wmicError) {
+          // wmic 也失败，记录警告
+          console.log('⚠️ wmic 关闭失败，可能需要手动关闭管理员权限的 Windsurf');
+        }
+        
+        // 最后检查进程是否还在运行
+        const stillRunning = await this.isWindsurfRunning();
+        if (!stillRunning) {
           return { killed: true, wasRunning: true };
         }
-        // 如果包含"找不到"或"not found"，说明没有该进程
-        if (output.includes('找不到') || output.includes('not found') || output.includes('not running')) {
-          return { killed: true, wasRunning: false };
-        }
-        return { killed: true, wasRunning: true };
+        
+        // 进程仍在运行，返回失败但提示用户
+        console.error('❌ 无法关闭以管理员身份运行的 Windsurf，请手动关闭');
+        return { killed: false, wasRunning: true, adminRequired: true };
       } else if (this.platform === 'darwin') {
         // macOS: 使用 killall
         await execPromise('killall Windsurf');
@@ -104,32 +126,36 @@ class ProcessMonitor {
         throw new Error('未指定 Windsurf 路径');
       }
 
-      let command;
       if (this.platform === 'win32') {
-        // Windows: 使用 start
-        if (workspacePath) {
-          command = `start "" "${exePath}" "${workspacePath}"`;
-        } else {
-          command = `start "" "${exePath}"`;
-        }
+        // Windows: 使用 spawn + detached 避免阻塞
+        const args = workspacePath ? [workspacePath] : [];
+        const child = spawn(exePath, args, {
+          detached: true,
+          stdio: 'ignore',
+          windowsHide: false
+        });
+        child.unref(); // 允许父进程独立退出
+        console.log(`✅ 已启动 Windsurf (PID: ${child.pid})${workspacePath ? `（工作区: ${workspacePath}）` : ''}`);
       } else if (this.platform === 'darwin') {
-        // macOS: 使用 open
-        if (workspacePath) {
-          command = `open "${exePath}" --args "${workspacePath}"`;
-        } else {
-          command = `open "${exePath}"`;
-        }
+        // macOS: 使用 open（非阻塞）
+        const args = workspacePath ? [exePath, '--args', workspacePath] : [exePath];
+        const child = spawn('open', args, {
+          detached: true,
+          stdio: 'ignore'
+        });
+        child.unref();
+        console.log(`✅ 已启动 Windsurf${workspacePath ? `（工作区: ${workspacePath}）` : ''}`);
       } else {
         // Linux: 直接执行
-        if (workspacePath) {
-          command = `"${exePath}" "${workspacePath}" &`;
-        } else {
-          command = `"${exePath}" &`;
-        }
+        const args = workspacePath ? [workspacePath] : [];
+        const child = spawn(exePath, args, {
+          detached: true,
+          stdio: 'ignore'
+        });
+        child.unref();
+        console.log(`✅ 已启动 Windsurf${workspacePath ? `（工作区: ${workspacePath}）` : ''}`);
       }
       
-      await execPromise(command);
-      console.log(`✅ 已启动 Windsurf${workspacePath ? `（工作区: ${workspacePath}）` : ''}`);
       return true;
     } catch (error) {
       console.error('启动 Windsurf 失败:', error);

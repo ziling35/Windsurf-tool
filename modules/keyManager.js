@@ -84,6 +84,83 @@ class KeyManager {
   }
 
   /**
+   * 验证密钥和设备（用于保存密钥时）
+   * @param {string} key - 密钥
+   * @param {string} deviceId - 设备ID
+   * @param {string} deviceName - 设备名称
+   * @returns {Promise<Object>} 验证结果
+   */
+  async verifyKeyWithDevice(key, deviceId = null, deviceName = null) {
+    if (!key) {
+      return {
+        success: false,
+        message: '密钥不能为空'
+      };
+    }
+
+    try {
+      console.log('🔐 验证密钥和设备...');
+      
+      // 构建请求头
+      const headers = {
+        'X-API-Key': key
+      };
+      
+      // 添加设备信息到请求头
+      if (deviceId) {
+        headers['X-Device-ID'] = deviceId;
+        console.log('📱 设备ID:', deviceId);
+      }
+      if (deviceName) {
+        headers['X-Device-Name'] = deviceName;
+        console.log('💻 设备名称:', deviceName);
+      }
+      
+      // 调用 key/status 接口验证密钥和设备
+      const response = await axios.get(
+        API_CONFIG.BASE_URL + '/key/status',
+        {
+          timeout: API_CONFIG.TIMEOUT,
+          headers: headers
+        }
+      );
+
+      console.log('✅ 密钥和设备验证成功');
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('❌ 密钥和设备验证失败:', error);
+      
+      let message = '验证失败';
+      if (error.response) {
+        const statusCode = error.response.status;
+        const errorData = error.response.data;
+        
+        if (statusCode === 403) {
+          // 设备绑定相关错误
+          message = errorData?.detail || errorData?.message || '设备验证失败';
+        } else if (statusCode === 401) {
+          message = '密钥无效';
+        } else {
+          message = errorData?.detail || errorData?.message || `服务器错误 (${statusCode})`;
+        }
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
+      return {
+        success: false,
+        message: message,
+        statusCode: error.response?.status
+      };
+    }
+  }
+
+  /**
    * 查询秘钥状态
    * @returns {Promise<Object>} 包含剩余时间等信息
    */
@@ -141,9 +218,11 @@ class KeyManager {
 
   /**
    * 获取账号
+   * @param {string} deviceId - 设备ID（可选）
+   * @param {string} deviceName - 设备名称（可选）
    * @returns {Promise<Object>} 包含账号信息
    */
-  async getAccount() {
+  async getAccount(deviceId = null, deviceName = null) {
     if (!this.keyData.key) {
       return {
         success: false,
@@ -155,14 +234,27 @@ class KeyManager {
       console.log('🔄 正在请求获取账号...');
       console.log('📡 API地址:', API_CONFIG.BASE_URL + '/account/get');
       
+      // 构建请求头
+      const headers = {
+        'X-API-Key': this.keyData.key
+      };
+      
+      // 如果提供了设备ID，添加到请求头
+      if (deviceId) {
+        headers['X-Device-ID'] = deviceId;
+        console.log('📱 设备ID:', deviceId);
+      }
+      if (deviceName) {
+        headers['X-Device-Name'] = deviceName;
+        console.log('💻 设备名称:', deviceName);
+      }
+      
       const response = await axios.post(
         API_CONFIG.BASE_URL + '/account/get',
         {},
         {
           timeout: API_CONFIG.TIMEOUT,
-          headers: {
-            'X-API-Key': this.keyData.key
-          }
+          headers: headers
         }
       );
 
@@ -798,6 +890,100 @@ class KeyManager {
         message = error.message;
       }
       
+      return {
+        success: false,
+        message: message
+      };
+    }
+  }
+
+  /**
+   * 获取设备绑定列表
+   * @returns {Promise<Object>} 设备绑定列表
+   */
+  async getDeviceBindings() {
+    if (!this.keyData.key) {
+      return {
+        success: false,
+        message: '未设置秘钥'
+      };
+    }
+
+    try {
+      const response = await axios.get(
+        API_CONFIG.BASE_URL + '/device/list',
+        {
+          timeout: API_CONFIG.TIMEOUT,
+          headers: {
+            'X-API-Key': this.keyData.key
+          }
+        }
+      );
+
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('获取设备绑定列表失败:', error);
+      
+      let message = '获取设备绑定列表失败';
+      if (error.response) {
+        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
+      return {
+        success: false,
+        message: message
+      };
+    }
+  }
+
+  /**
+   * 解绑设备
+   * @param {string} deviceId - 设备ID
+   * @returns {Promise<Object>} 解绑结果
+   */
+  async unbindDevice(deviceId) {
+    if (!this.keyData.key) {
+      return {
+        success: false,
+        message: '未设置秘钥'
+      };
+    }
+
+    try {
+      const response = await axios.post(
+        API_CONFIG.BASE_URL + '/device/unbind',
+        { device_id: deviceId },
+        {
+          timeout: API_CONFIG.TIMEOUT,
+          headers: {
+            'X-API-Key': this.keyData.key
+          }
+        }
+      );
+
+      return {
+        success: true,
+        data: response.data
+      };
+    } catch (error) {
+      console.error('解绑设备失败:', error);
+      
+      let message = '解绑设备失败';
+      if (error.response) {
+        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
       return {
         success: false,
         message: message
