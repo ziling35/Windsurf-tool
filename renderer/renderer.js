@@ -14,6 +14,59 @@ let versionUpdateRequired = false; // 是否需要更新
 // 插件安装状态标志（安装过程中暂停插件卸载监控弹窗）
 let isInstallingPlugin = false;
 
+// 一键换号冷却倒计时相关
+let switchCooldownEndTime = 0; // 冷却结束时间戳
+let switchCooldownTimer = null; // 倒计时定时器
+
+// ===== 卡密到期自动下号相关 =====
+let keyExpirationCheckTimer = null; // 定期检查卡密状态的定时器
+const KEY_EXPIRATION_CHECK_INTERVAL = 5 * 60 * 1000; // 5分钟检查一次
+let hasTriggeredExpiredLogout = false; // 是否已触发过到期下号，防止重复触发
+
+// 启动一键换号冷却倒计时
+function startSwitchCooldown(seconds) {
+  const btn = document.getElementById('one-click-switch-btn');
+  if (!btn) return;
+  
+  // 清除已有的定时器
+  if (switchCooldownTimer) {
+    clearInterval(switchCooldownTimer);
+  }
+  
+  // 设置冷却结束时间
+  switchCooldownEndTime = Date.now() + seconds * 1000;
+  btn.disabled = true;
+  
+  // 更新按钮显示
+  const updateCooldownDisplay = () => {
+    const remaining = Math.ceil((switchCooldownEndTime - Date.now()) / 1000);
+    if (remaining <= 0) {
+      // 倒计时结束
+      clearInterval(switchCooldownTimer);
+      switchCooldownTimer = null;
+      switchCooldownEndTime = 0;
+      btn.disabled = false;
+      btn.innerHTML = '<i data-lucide="zap"></i><span>一键换号</span>';
+      try { lucide.createIcons(); } catch (e) {}
+    } else {
+      // 显示剩余秒数
+      btn.innerHTML = `<i data-lucide="clock"></i><span>请等待 ${remaining}s</span>`;
+      try { lucide.createIcons(); } catch (e) {}
+    }
+  };
+  
+  // 立即更新一次
+  updateCooldownDisplay();
+  
+  // 每秒更新
+  switchCooldownTimer = setInterval(updateCooldownDisplay, 1000);
+}
+
+// 检查是否在冷却中
+function isInSwitchCooldown() {
+  return switchCooldownEndTime > Date.now();
+}
+
 // ===== 工具函数 =====
 
 // 初始化更多操作下拉菜单事件（使用事件委托）
@@ -664,6 +717,13 @@ async function saveKey() {
     if (result.success) {
       showToast('秘钥已保存', 'success');
       log('✅ 秘钥已保存', 'success');
+      
+      // 重置到期下号标志（新秘钥允许重新检查）
+      resetExpiredLogoutFlag();
+      
+      // 重新启动定期检查
+      startKeyExpirationCheck();
+      
       // 立即查询秘钥状态
       await checkKeyStatus();
       
@@ -702,6 +762,159 @@ async function syncKeyToPlugin() {
     // 同步失败不影响主流程
     log(`⚠️ 插件同步失败: ${error.message}`, 'warning');
   }
+}
+
+// ===== 卡密到期自动下号功能 =====
+
+/**
+ * 启动定期检查卡密到期状态
+ * 每5分钟检查一次，如果卡密已过期，自动清除登录信息并退出 Windsurf
+ */
+function startKeyExpirationCheck() {
+  // 清除已有的定时器
+  stopKeyExpirationCheck();
+  
+  // 静默启动，不显示日志
+  
+  // 立即执行一次检查
+  setTimeout(() => {
+    checkKeyExpiration();
+  }, 10000); // 延迟10秒，等待界面加载完成
+  
+  // 设置定期检查
+  keyExpirationCheckTimer = setInterval(() => {
+    checkKeyExpiration();
+  }, KEY_EXPIRATION_CHECK_INTERVAL);
+}
+
+/**
+ * 停止定期检查
+ */
+function stopKeyExpirationCheck() {
+  if (keyExpirationCheckTimer) {
+    clearInterval(keyExpirationCheckTimer);
+    keyExpirationCheckTimer = null;
+    console.log('[到期检查] 已停止定期检查');
+  }
+}
+
+/**
+ * 检查卡密是否过期（静默检查，过期时自动下号）
+ * 这是定期检查的核心逻辑，与 checkKeyStatus 不同的是：
+ * 1. 不显示查询中的提示
+ * 2. 只在过期时弹窗提醒
+ * 3. 防止重复触发下号逻辑
+ */
+async function checkKeyExpiration() {
+  // 如果已经触发过到期下号，不再重复检查
+  if (hasTriggeredExpiredLogout) {
+    console.log('[到期检查] 已触发过到期下号，跳过本次检查');
+    return;
+  }
+  
+  // 静默检查，不显示日志
+  
+  try {
+    // 检查是否有秘钥
+    const keyInfoResult = await window.electronAPI.getKeyInfo();
+    const keyInfo = keyInfoResult.data || keyInfoResult; // 兼容两种格式
+    if (!keyInfo.hasKey || !keyInfo.key) {
+      return;
+    }
+    
+    // 静默查询秘钥状态（添加超时）
+    
+    const timeoutPromise = new Promise((_, reject) => 
+      setTimeout(() => reject(new Error('API请求超时(10秒)')), 10000)
+    );
+    
+    const result = await Promise.race([
+      window.electronAPI.checkKeyStatus(),
+      timeoutPromise
+    ]);
+    
+    if (!result.success) {
+      return;
+    }
+    
+    const data = result.data || {};
+    let status = data.status || data.Status;
+    
+    // 静默处理后端返回的数据
+    
+    // 根据 expires_at 时间判断是否过期
+    const expiresAt = data.expires_at || data.expiresAt;
+    
+    if (expiresAt) {
+      const expiresTime = new Date(expiresAt).getTime();
+      const now = Date.now();
+      const diffMs = expiresTime - now;
+      const diffMinutes = Math.floor(diffMs / (1000 * 60));
+      
+      if (now >= expiresTime) {
+        status = 'expired';
+      }
+    }
+    
+    // 检查是否过期或未激活
+    if (status === 'expired' || status === 'inactive') {
+      const statusMsg = status === 'expired' ? '已过期' : '未激活';
+      console.log(`[到期检查] 🚨 检测到卡密${statusMsg}，触发自动下号逻辑`);
+      log(`⚠️ 定期检查发现秘钥${statusMsg}，正在执行下号...`, 'warning');
+      
+      // 设置标志，防止重复触发
+      hasTriggeredExpiredLogout = true;
+      
+      // 停止定期检查
+      stopKeyExpirationCheck();
+      
+      // 先执行下号
+      log(`🚨 秘钥${statusMsg}，正在自动下号...`, 'warning');
+      
+      // 清除登录信息并退出 Windsurf
+      let clearSuccess = false;
+      try {
+        const clearResult = await window.electronAPI.clearWindsurfAuth();
+        if (clearResult.success) {
+          clearSuccess = true;
+          log('✅ 已清除登录信息并退出 Windsurf', 'info');
+        } else {
+          log(`⚠️ 清除登录信息失败: ${clearResult.message}`, 'warning');
+        }
+      } catch (e) {
+        console.error('[到期检查] 清除登录信息失败:', e);
+      }
+      
+      // 刷新界面显示
+      const keyStatusEl = document.getElementById('key-status');
+      if (keyStatusEl) {
+        keyStatusEl.textContent = statusMsg;
+        keyStatusEl.className = 'key-info-value inactive';
+      }
+      
+      // 下号完成后再弹窗通知用户
+      await showModal(
+        `秘钥${statusMsg}`,
+        `您的秘钥${statusMsg}，已自动清除登录信息并退出 Windsurf 账号。\n\n请续费或更换有效秘钥后重新使用。`,
+        { showCancel: false, confirmText: '我知道了' }
+      );
+      
+      return;
+    }
+    
+    // 卡密有效，静默通过
+    
+  } catch (error) {
+    // 静默处理错误
+  }
+}
+
+/**
+ * 重置到期下号标志（用于用户更换新秘钥后）
+ */
+function resetExpiredLogoutFlag() {
+  hasTriggeredExpiredLogout = false;
+  console.log('[到期检查] 已重置到期下号标志');
 }
 
 // 查询秘钥状态
@@ -769,25 +982,27 @@ async function checkKeyStatus() {
     // 秘钥未激活或已过期时，清除登录信息并退出 Windsurf
     if (!isActive && (status === 'inactive' || status === 'expired')) {
       const statusMsg = status === 'expired' ? '已过期' : '未激活';
-      log(`⚠️ 秘钥${statusMsg}，正在清除登录信息并退出 Windsurf...`, 'warning');
+      log(`🚨 秘钥${statusMsg}，正在自动下号...`, 'warning');
       
-      await showModal(
-        `秘钥${statusMsg}`,
-        `检测到您的秘钥${statusMsg}。\n\n为保证正常使用，将清除登录信息并退出当前 Windsurf 账号。请续费或更换有效秘钥后重新使用。`,
-        { showCancel: false, confirmText: '我知道了' }
-      );
-      
+      // 先执行下号
       try {
         const result = await window.electronAPI.clearWindsurfAuth();
         if (result.success) {
           log('✅ 已清除登录信息并退出 Windsurf', 'info');
-          showToast('已退出登录，请更换有效秘钥', 'warning');
         } else {
           log(`⚠️ 清除登录信息失败: ${result.message}`, 'warning');
         }
       } catch (e) {
         console.error('清除登录信息失败:', e);
       }
+      
+      // 下号完成后再弹窗通知用户
+      await showModal(
+        `秘钥${statusMsg}`,
+        `您的秘钥${statusMsg}，已自动清除登录信息并退出 Windsurf 账号。\n\n请续费或更换有效秘钥后重新使用。`,
+        { showCancel: false, confirmText: '我知道了' }
+      );
+      
       return; // 退出后不再继续执行
     }
     
@@ -1811,6 +2026,13 @@ async function launchWindsurf(skipToast = false) {
 
 // 一键换号（自动化流程）
 async function oneClickSwitch() {
+  // 检查是否在冷却中
+  if (isInSwitchCooldown()) {
+    const remaining = Math.ceil((switchCooldownEndTime - Date.now()) / 1000);
+    showToast(`请等待 ${remaining} 秒后再试`, 'warning');
+    return;
+  }
+  
   // 版本检查
   const canProceed = await checkClientVersion();
   if (!canProceed) {
@@ -1836,7 +2058,60 @@ async function oneClickSwitch() {
   showToast('开始一键换号...', 'info');
   
   try {
-    // 获取账号
+    // 先检查卡密类型
+    const statusResult = await window.electronAPI.checkKeyStatus();
+    const keyType = statusResult.success ? (statusResult.data.key_type || statusResult.data.keyType || 'limited') : 'limited';
+    
+    // Team类型卡密：使用teamSwitch一键切号
+    if (keyType === 'team') {
+      log('🔄 检测到Team卡密，使用一键切号...', 'info');
+      const teamResult = await window.electronAPI.teamSwitch();
+      
+      console.log('📦 Team切号返回数据:', teamResult);
+      
+      if (teamResult.success) {
+        log(`✅ Team切号成功: ${teamResult.data.email}`, 'success');
+        
+        // 检查是否需要重启（已直接写入数据库）
+        if (teamResult.needRestart) {
+          log('✅ 登录信息已写入数据库', 'success');
+          log('⚠️ 请重启 Windsurf 使登录生效', 'warning');
+          showToast('切号成功！请重启 Windsurf 使登录生效', 'success');
+        } else if (teamResult.data.callback_url) {
+          // 降级方案：如果数据库写入失败，会打开URL
+          log('🔗 已通过URL方式登录', 'info');
+          showToast('切号成功！Windsurf将自动登录', 'success');
+        } else {
+          log('⚠️ 未返回callback_url', 'warning');
+          showToast('切号成功', 'success');
+        }
+        
+        // 刷新状态
+        await checkKeyStatus();
+      } else {
+        // 检查是否是频率限制错误
+        const teamMsg = teamResult.message || '';
+        if (teamMsg.includes('秒后再试')) {
+          const match = teamMsg.match(/(\d+)秒后再试/);
+          if (match) {
+            const seconds = parseInt(match[1]);
+            startSwitchCooldown(seconds);
+            throw new Error(`请求过于频繁，请等待 ${seconds} 秒`);
+          }
+        }
+        throw new Error(teamMsg || 'Team切号失败');
+      }
+      
+      // Team切号完成后直接返回
+      if (btn) {
+        btn.disabled = false;
+        btn.innerHTML = originalHTML;
+        try { lucide.createIcons(); } catch (e) {}
+      }
+      return;
+    }
+    
+    // 非Team类型：获取账号
     log('1️⃣ 正在获取账号...', 'info');
     const accountResult = await window.electronAPI.getAccount();
     
@@ -1860,15 +2135,18 @@ async function oneClickSwitch() {
         if (msg.includes('零点刷新')) {
           throw new Error('今日获取次数已达上限（20次），零点刷新');
         } else if (msg.includes('秒后再试')) {
-          // 提取等待秒数
+          // 提取等待秒数并启动倒计时
           const match = msg.match(/(\d+)秒后再试/);
           if (match) {
             const seconds = parseInt(match[1]);
-            throw new Error(`请求过于频繁，请等待 ${seconds} 秒后再试`);
+            startSwitchCooldown(seconds); // 启动倒计时
+            throw new Error(`请求过于频繁，请等待 ${seconds} 秒`);
           }
           throw new Error(msg);
         }
-        throw new Error(msg || '请求过于频繁，请稍后再试');
+        // 默认冷却时间为30秒
+        startSwitchCooldown(30);
+        throw new Error(msg || '请求过于频繁，请等待 30 秒');
       } else if (code === 403) {
         if (msg.includes('禁用')) {
           throw new Error('密钥已被管理员禁用，请联系管理员');
@@ -1911,20 +2189,48 @@ async function oneClickSwitch() {
     // 获取账号后自动刷新秘钥状态（额度等）
     await checkKeyStatus();
     
-    // 切换账号（主进程内包含备份/关闭/重置设备ID/重置指纹/重启）
-    log('4️⃣ 正在切换账号...', 'info');
-    const switchResult = await window.electronAPI.switchAccount({ 
-      token: api_key, 
-      email: email, 
-      label: label
-    });
-    
-    if (!switchResult.success) {
-      throw new Error(switchResult.message || '切换账号失败');
+    // Pro账号使用无感换号（调用后端 /pro/switch 获取 OTT Token）
+    if (is_pro) {
+      log('4️⃣ 正在无感切换Pro账号（OTT模式）...', 'info');
+      console.log('[Pro切号] is_pro=true, 使用后端OTT无感换号');
+      
+      // 调用后端 /pro/switch 接口获取 OTT Token 并触发无感换号
+      const switchResult = await window.electronAPI.proSwitch();
+      
+      console.log('[Pro切号] proSwitch 返回:', switchResult);
+      
+      if (!switchResult.success) {
+        // 检查是否是频率限制错误
+        const proMsg = switchResult.message || '';
+        if (proMsg.includes('秒后再试')) {
+          const match = proMsg.match(/(\d+)秒后再试/);
+          if (match) {
+            const seconds = parseInt(match[1]);
+            startSwitchCooldown(seconds);
+            throw new Error(`请求过于频繁，请等待 ${seconds} 秒`);
+          }
+        }
+        throw new Error(proMsg || 'Pro无感切换失败');
+      }
+      
+      log(`🎉 Pro无感换号成功！(${switchResult.token_type || 'OTT'})`, 'success');
+      showToast(`Pro账号已切换: ${switchResult.email || email}`, 'success');
+    } else {
+      // 普通账号：使用原有流程（重启 Windsurf）
+      log('4️⃣ 正在切换账号...', 'info');
+      const switchResult = await window.electronAPI.switchAccount({ 
+        token: api_key, 
+        email: email, 
+        label: label
+      });
+      
+      if (!switchResult.success) {
+        throw new Error(switchResult.message || '切换账号失败');
+      }
+      
+      log('🎉 一键换号完成！', 'success');
+      showToast('一键换号成功！', 'success');
     }
-    
-    log('🎉 一键换号完成！', 'success');
-    showToast('一键换号成功！', 'success');
     
     // 刷新账号信息和历史
     setTimeout(() => {
@@ -4175,11 +4481,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     checkAndDisplayLatestVersion();
   }, 30 * 60 * 1000);
   
-  // 页面卸载时清理轮播定时器
+  // 页面卸载时清理定时器
   window.addEventListener('beforeunload', () => {
     if (announcementInterval) {
       clearInterval(announcementInterval);
     }
+    // 清理卡密到期检查定时器
+    stopKeyExpirationCheck();
   });
   // Mac 权限检查（仅在 macOS 上执行）
   if (navigator.platform.toLowerCase().includes('mac')) {
@@ -4212,6 +4520,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     console.log('[定时] 检查插件更新...');
     checkPluginUpdateSilently(true);
   }, 30 * 60 * 1000);
+  
+  // ===== 卡密到期自动下号检查（每 5 分钟）=====
+  startKeyExpirationCheck();
   
   // ===== 插件卸载监控（每 10 秒检测一次）=====
   // 记录上次插件安装状态

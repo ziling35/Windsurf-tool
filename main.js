@@ -308,7 +308,8 @@ try {
 
 // 导入核心模块（添加错误处理）
 let DeviceManager, SessionManager, ProcessMonitor, ConfigManager, KeyManager, 
-    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager, FileProtector, AccountRecognitionMonitor;
+    AccountHistoryManager, AdminChecker, MacPermissionChecker, SecureStorageManager, FileProtector, AccountRecognitionMonitor,
+    ExtensionPatcher;
 
 try {
   DeviceManager = require('./modules/deviceManager');
@@ -322,6 +323,9 @@ try {
   AccountRecognitionMonitor = require('./modules/accountRecognitionMonitor');
   SecureStorageManager = require('./modules/secureStorageManager');
   FileProtector = require('./modules/fileProtector');
+  // ExtensionPatcher - 参考 windsurf-switcher.exe 的补丁逻辑
+  const patcherModule = require('./modules/extensionPatcher');
+  ExtensionPatcher = patcherModule.ExtensionPatcher;
   writeLog('INFO', '所有核心模块加载成功');
 } catch (error) {
   writeLog('ERROR', '加载核心模块失败', error);
@@ -1092,6 +1096,393 @@ ipcMain.handle('get-account', async () => {
   }
 });
 
+// ===== windsurf-switcher 风格的简化换号 (逆向分析得出) =====
+
+/**
+ * 解析 callback_url 提取 access_token
+ * 格式: windsurf://codeium.windsurf#access_token=xxx&state=xxx&token_type=Bearer
+ * 注意: 不能使用 URLSearchParams，因为 $ 符号会被错误解析
+ */
+function parseCallbackUrl(callbackUrl) {
+  try {
+    if (!callbackUrl || !callbackUrl.includes('#')) {
+      return null;
+    }
+    const hashPart = callbackUrl.split('#')[1];
+    
+    // 手动解析，避免 $ 符号被 URLSearchParams 错误处理
+    const result = {};
+    const pairs = hashPart.split('&');
+    for (const pair of pairs) {
+      const idx = pair.indexOf('=');
+      if (idx > 0) {
+        const key = pair.substring(0, idx);
+        const value = pair.substring(idx + 1);
+        result[key] = value;
+      }
+    }
+    
+    console.log('📋 解析 callback_url 结果:', {
+      accessToken: result.access_token ? result.access_token.substring(0, 30) + '...' : null,
+      state: result.state,
+      tokenType: result.token_type
+    });
+    
+    return {
+      accessToken: result.access_token || null,
+      state: result.state || null,
+      tokenType: result.token_type || 'Bearer'
+    };
+  } catch (e) {
+    console.error('解析 callback_url 失败:', e);
+    return null;
+  }
+}
+
+/**
+ * windsurf-switcher 风格的简化写入
+ * 直接写入 windsurfAuthStatus，不需要复杂的 sessions 结构
+ */
+async function writeWindsurfAuthStatus(apiKey) {
+  const dbPath = path.join(windsurfPath, 'User', 'globalStorage', 'state.vscdb');
+  
+  if (!fs.existsSync(dbPath)) {
+    throw new Error('state.vscdb 不存在');
+  }
+  
+  const filebuffer = fs.readFileSync(dbPath);
+  const initSqlJs = require('sql.js');
+  const SQL = await initSqlJs();
+  const db = new SQL.Database(filebuffer);
+  
+  try {
+    // windsurf-switcher 的 SQL 逻辑 (逆向提取)
+    // 1. 删除旧认证数据
+    db.run("DELETE FROM ItemTable WHERE key = 'windsurfAuthStatus' OR key LIKE 'secret://%'");
+    console.log('✅ 已删除旧认证数据');
+    
+    // 2. 写入新的 windsurfAuthStatus
+    const authStatus = JSON.stringify({ apiKey: apiKey });
+    db.run(
+      "INSERT OR REPLACE INTO ItemTable (key, value) VALUES ('windsurfAuthStatus', ?)",
+      [authStatus]
+    );
+    console.log('✅ 已写入 windsurfAuthStatus');
+    
+    // 3. 保存到文件
+    const data = db.export();
+    const buffer = Buffer.from(data);
+    fs.writeFileSync(dbPath, buffer);
+    
+    db.close();
+    return true;
+  } catch (e) {
+    db.close();
+    throw e;
+  }
+}
+
+// ===== Pro 卡密一键切号（调用后端 /pro/switch）=====
+// 原理：调用后端获取 OTT Token，通过 URI Handler 实现无感换号
+ipcMain.handle('pro-switch', async () => {
+  try {
+    console.log('🔄 Pro卡密一键切号（后端OTT模式）...');
+    const result = await keyManager.proSwitch();
+    
+    if (result.success && result.data) {
+      console.log('✅ Pro切号成功');
+      console.log('📧 邮箱:', result.data.email);
+      console.log('📋 Token类型:', result.data.token_type);
+      
+      // 等待 Windsurf 处理
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      return {
+        success: true,
+        message: `Pro账号已切换: ${result.data.email}`,
+        email: result.data.email,
+        name: result.data.name,
+        token_type: result.data.token_type
+      };
+    } else {
+      return {
+        success: false,
+        message: result.message || 'Pro切号失败'
+      };
+    }
+  } catch (error) {
+    console.error('❌ Pro切号失败:', error);
+    return {
+      success: false,
+      message: error.message || 'Pro切号失败'
+    };
+  }
+});
+
+// ===== Pro 账号无感换号（旧方法，使用传入的apiKey）=====
+// 原理：构造 windsurf:// URL 让 Windsurf 通过 URI Handler 处理
+ipcMain.handle('pro-seamless-switch', async (event, { apiKey, email }) => {
+  try {
+    console.log('🔄 Pro 账号无感换号...');
+    console.log('   API Key:', apiKey ? apiKey.substring(0, 20) + '...' : 'null');
+    console.log('   Email:', email || '未知');
+    
+    if (!apiKey || !apiKey.startsWith('sk-ws-')) {
+      return { success: false, message: 'API Key 格式不正确，必须以 sk-ws- 开头' };
+    }
+    
+    const result = {
+      success: false,
+      seamless: false,
+      newApiKey: null,
+      message: ''
+    };
+    
+    // 确保 Windsurf 正在运行（URI Handler 需要进程存在）
+    const isRunning = await processMonitor.isWindsurfRunning();
+    if (!isRunning) {
+      console.log('🚀 [Pro切号] Windsurf 未运行，正在启动...');
+      let exePath = configManager.getWindsurfExePath();
+      if (exePath) {
+        await processMonitor.launchWindsurf(exePath);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log('✅ [Pro切号] Windsurf 已启动');
+      }
+    } else {
+      console.log('✅ [Pro切号] Windsurf 已在运行');
+    }
+    
+    // 构造 callback_url（模拟 OTT 格式）
+    // 格式: windsurf://codeium.windsurf#access_token=xxx&state=xxx&token_type=Bearer
+    const state = `pro_switch_${Date.now()}`;
+    const callbackUrl = `windsurf://codeium.windsurf#access_token=${encodeURIComponent(apiKey)}&state=${state}&token_type=Bearer`;
+    
+    console.log('🔗 [Pro切号] 构造的 callback_url:', callbackUrl.substring(0, 80) + '...');
+    
+    // 核心操作：打开 callback_url，触发 Windsurf 的 URI Handler
+    console.log('🔗 [Pro切号] 打开登录 URL...');
+    await shell.openExternal(callbackUrl);
+    console.log('✅ [Pro切号] 登录 URL 已发送到 Windsurf');
+    
+    // 等待 Windsurf 处理并获取新的 API Key
+    console.log('⏳ [Pro切号] 等待 Windsurf 处理登录...');
+    await new Promise(resolve => setTimeout(resolve, 5000));
+    
+    // 尝试从数据库读取验证
+    let newApiKey = null;
+    const maxRetries = 5;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        console.log(`🔍 [Pro切号] 第 ${i + 1}/${maxRetries} 次尝试验证 API Key...`);
+        const sessionManager = new SessionManager(windsurfPath);
+        const sessions = await sessionManager.readPlainSessions();
+        
+        if (sessions && sessions.sessions && sessions.sessions.length > 0) {
+          const firstSession = sessions.sessions[0];
+          if (firstSession.accessToken && firstSession.accessToken.startsWith('sk-ws-')) {
+            newApiKey = firstSession.accessToken;
+            console.log('✅ [Pro切号] 验证到 API Key:', newApiKey.substring(0, 20) + '...');
+            break;
+          }
+        }
+        
+        await new Promise(resolve => setTimeout(resolve, 2000));
+      } catch (readError) {
+        console.log(`⚠️ [Pro切号] 读取失败: ${readError.message}`);
+      }
+    }
+    
+    result.success = true;
+    result.seamless = true;
+    result.newApiKey = newApiKey;
+    result.message = newApiKey 
+      ? `Pro 无感换号成功，API Key: ${newApiKey.substring(0, 20)}...` 
+      : '登录请求已发送，请检查 Windsurf 登录状态';
+    
+    return result;
+    
+  } catch (error) {
+    console.error('❌ Pro 无感换号失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// Team卡密一键切号（使用 windsurf-switcher 风格的简化逻辑）
+ipcMain.handle('team-switch', async () => {
+  try {
+    console.log('🔄 Team卡密一键切号 (windsurf-switcher 风格)...');
+    const result = await keyManager.teamSwitch(false);
+    
+    if (result.success && result.data && result.data.callback_url) {
+      console.log('🔗 获取到 callback_url:', result.data.callback_url);
+      console.log('📧 邮箱:', result.data.email);
+      
+      // 1. 解析 callback_url 获取 access_token
+      const parsed = parseCallbackUrl(result.data.callback_url);
+      
+      if (parsed && parsed.accessToken) {
+        const token = parsed.accessToken;
+        console.log('🔑 解析到 access_token:', token.substring(0, 20) + '...');
+        
+        // 判断 token 类型
+        const isOTT = token.startsWith('ott$');  // One-Time Token
+        const isFinalKey = token.startsWith('sk-ws-');  // 最终 API Key
+        
+        console.log(`📋 Token 类型: ${isOTT ? 'OTT (一次性令牌)' : isFinalKey ? '最终 API Key' : '未知'}`);
+        
+        if (isFinalKey) {
+          // ===== 最终 API Key：直接写入数据库 =====
+          console.log('📝 使用直接写入方式...');
+          
+          // 关闭 Windsurf
+          const isRunning = await processMonitor.isWindsurfRunning();
+          if (isRunning) {
+            console.log('🔄 关闭 Windsurf...');
+            await processMonitor.killWindsurf();
+            await new Promise(resolve => setTimeout(resolve, 1500));
+          }
+          
+          try {
+            await writeWindsurfAuthStatus(token);
+            console.log('✅ windsurfAuthStatus 写入成功');
+            
+            // 重置设备ID
+            const deviceManager = new DeviceManager(windsurfPath);
+            deviceManager.resetDeviceIds();
+            console.log('✅ 设备ID已重置');
+            
+            // 启动 Windsurf
+            let exePath = configManager.getWindsurfExePath();
+            if (exePath) {
+              await processMonitor.launchWindsurf(exePath);
+              console.log('✅ Windsurf 已启动');
+            }
+            
+            result.needRestart = false;
+            result.switchSuccess = true;
+            
+          } catch (writeError) {
+            console.error('❌ 写入失败:', writeError.message);
+            await shell.openExternal(result.data.callback_url);
+            result.fallback = true;
+          }
+          
+        } else {
+          // ===== OTT 无感换号（windsurf-switcher.exe 核心原理） =====
+          // 核心原理：直接打开 windsurf://codeium.windsurf#access_token=ott$xxx URL
+          // Windsurf 会通过 URI Handler 接收并处理登录
+          console.log('🔗 OTT 无感换号模式...');
+          
+          try {
+            // 确保 Windsurf 正在运行（URI Handler 需要进程存在）
+            const isRunning = await processMonitor.isWindsurfRunning();
+            if (!isRunning) {
+              console.log('🚀 [切号] Windsurf 未运行，正在启动...');
+              let exePath = configManager.getWindsurfExePath();
+              if (exePath) {
+                await processMonitor.launchWindsurf(exePath);
+                // 等待 Windsurf 启动完成
+                await new Promise(resolve => setTimeout(resolve, 3000));
+                console.log('✅ [切号] Windsurf 已启动');
+              }
+            } else {
+              console.log('✅ [切号] Windsurf 已在运行');
+            }
+            
+            // 核心操作：直接打开 callback_url，触发 Windsurf 的 URI Handler
+            console.log('🔗 [切号] 打开登录 URL...');
+            await shell.openExternal(result.data.callback_url);
+            console.log('✅ [切号] 登录 URL 已发送到 Windsurf');
+            
+            // 等待 Windsurf 处理 OTT 并获取新的 API Key
+            console.log('⏳ [切号] 等待 Windsurf 处理登录...');
+            await new Promise(resolve => setTimeout(resolve, 5000));
+            
+            // 尝试从数据库读取新的 API Key
+            let newApiKey = null;
+            const maxRetries = 5;
+            for (let i = 0; i < maxRetries; i++) {
+              try {
+                console.log(`🔍 [切号] 第 ${i + 1}/${maxRetries} 次尝试读取 API Key...`);
+                const sessionManager = new SessionManager(windsurfPath);
+                const sessions = await sessionManager.readPlainSessions();
+                
+                if (sessions && sessions.sessions && sessions.sessions.length > 0) {
+                  const firstSession = sessions.sessions[0];
+                  if (firstSession.accessToken && firstSession.accessToken.startsWith('sk-ws-')) {
+                    newApiKey = firstSession.accessToken;
+                    console.log('✅ [切号] 获取到新的 API Key:', newApiKey.substring(0, 20) + '...');
+                    break;
+                  }
+                }
+                
+                // 等待 2 秒后重试
+                await new Promise(resolve => setTimeout(resolve, 2000));
+              } catch (readError) {
+                console.log(`⚠️ [切号] 读取失败: ${readError.message}`);
+              }
+            }
+            
+            result.switchSuccess = true;
+            result.seamless = true;
+            result.newApiKey = newApiKey;
+            result.message = newApiKey ? `换号成功，API Key: ${newApiKey.substring(0, 20)}...` : '登录请求已发送，请检查 Windsurf 登录状态';
+            
+          } catch (err) {
+            console.error('❌ [切号] 换号失败:', err.message);
+            // 降级：仍然尝试打开 URL
+            await shell.openExternal(result.data.callback_url);
+            result.fallback = true;
+          }
+        }
+      } else {
+        console.error('❌ 无法解析 access_token');
+        await shell.openExternal(result.data.callback_url);
+        result.fallback = true;
+      }
+    }
+    
+    return result;
+  } catch (error) {
+    console.error('Team切号失败:', error);
+    return { success: false, message: error.message };
+  }
+});
+
+// ===== Extension Patcher IPC 处理器 (参考 windsurf-switcher.exe) =====
+
+// 检查补丁状态
+ipcMain.handle('patcher-status', async () => {
+  try {
+    const patcher = new ExtensionPatcher(windsurfPath);
+    return { success: true, ...patcher.getStatus() };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+// 安装补丁
+ipcMain.handle('patcher-install', async () => {
+  try {
+    const patcher = new ExtensionPatcher(windsurfPath);
+    const result = patcher.patch();
+    return { success: true, ...result };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
+// 恢复原始文件
+ipcMain.handle('patcher-restore', async () => {
+  try {
+    const patcher = new ExtensionPatcher(windsurfPath);
+    const restored = patcher.restore();
+    return { success: restored, message: restored ? '已恢复原始文件' : '备份文件不存在' };
+  } catch (error) {
+    return { success: false, message: error.message };
+  }
+});
+
 // ===== 插件管理 IPC 处理器 =====
 
 // 获取插件列表（从服务器）
@@ -1211,34 +1602,74 @@ ipcMain.handle('get-server-account-history', async () => {
   }
 });
 
-// 热切换账号（通过插件，不重启 Windsurf）
+// 热切换账号（真正无感换号：直接写入 windsurfAuthStatus + URI 触发重载）
 ipcMain.handle('hot-switch-account', async (event, { token, email, label, workspacePath }) => {
   try {
-    console.log('🔥 开始热切换账号...');
+    console.log('🔥 开始真正无感换号...');
     console.log('   Email:', email);
-    console.log('   工作区:', workspacePath);
+    console.log('   Token:', token ? token.substring(0, 20) + '...' : 'null');
     
-    const result = await KeyManager.hotSwitchAccount(token, email, label, workspacePath);
-    
-    if (result.success) {
-      console.log('✅ 热切换成功');
-      
-      // 更新本地历史记录
-      try {
-        accountHistoryManager.addAccount({
-          token: token,
-          email: email,
-          label: label
-        });
-      } catch (historyError) {
-        console.error('写入账号历史失败:', historyError);
+    // 1. 确保 Windsurf 正在运行
+    const isRunning = await processMonitor.isWindsurfRunning();
+    if (!isRunning) {
+      console.log('🚀 Windsurf 未运行，正在启动...');
+      let exePath = configManager.getWindsurfExePath();
+      if (exePath) {
+        await processMonitor.launchWindsurf(exePath);
+        await new Promise(resolve => setTimeout(resolve, 3000));
+        console.log('✅ Windsurf 已启动');
       }
-      
-      // 更新最后使用的邮箱
-      configManager.setLastEmail(email);
     }
     
-    return result;
+    // 2. 使用 SessionManager 写入正确格式（codeium.windsurf 键 + windsurf_auth.sessions 字段）
+    const appDataPath = path.join(app.getPath('appData'), 'PaperCrane-Windsurf');
+    const sessionManager = new SessionManager(windsurfPath, appDataPath);
+    
+    try {
+      console.log('📝 写入 sessions 到数据库...');
+      // 写入明文和加密的 sessions（与普通切号相同格式）
+      await sessionManager.writeAllSessions(token, email, label);
+      console.log('✅ sessions 已写入数据库');
+    } catch (writeError) {
+      console.error('❌ 写入数据库失败:', writeError);
+      return { success: false, message: '写入数据库失败: ' + writeError.message };
+    }
+    
+    // 3. 更新本地历史记录
+    try {
+      accountHistoryManager.addAccount({
+        token: token,
+        email: email,
+        label: label
+      });
+    } catch (historyError) {
+      console.error('写入账号历史失败:', historyError);
+    }
+    
+    // 更新最后使用的邮箱
+    configManager.setLastEmail(email);
+    
+    // 4. 打开 windsurf:// URI 触发认证刷新
+    console.log('🔄 触发 Windsurf 认证刷新...');
+    
+    try {
+      // 使用 access_token 格式的 URI 触发登录回调
+      const callbackUri = `windsurf://codeium.windsurf#access_token=${encodeURIComponent(token)}&state=pro_switch_${Date.now()}&token_type=Bearer`;
+      await shell.openExternal(callbackUri);
+      console.log('✅ 已触发 Windsurf 认证刷新');
+      
+      // 等待一下让 Windsurf 处理
+      await new Promise(resolve => setTimeout(resolve, 1000));
+    } catch (uriError) {
+      console.error('⚠️ URI 触发失败:', uriError.message);
+    }
+    
+    return { 
+      success: true, 
+      message: 'Pro账号已无感切换',
+      data: { reloadTriggered: true }
+    };
+    
   } catch (error) {
     console.error('热切换账号失败:', error);
     return { success: false, message: error.message };
@@ -1641,14 +2072,15 @@ ipcMain.handle('open-external-url', async (event, url) => {
       return { success: false, message: '链接为空' };
     }
     
-    // 验证URL格式
-    const urlPattern = /^https?:\/\//;
+    // 验证URL格式（允许 http://, https://, windsurf:// 协议）
+    const urlPattern = /^(https?|windsurf):\/\//;
     if (!urlPattern.test(url)) {
-      return { success: false, message: '链接格式不正确，必须以 http:// 或 https:// 开头' };
+      return { success: false, message: '链接格式不正确' };
     }
     
+    console.log('🔗 打开外部链接:', url);
     await shell.openExternal(url);
-    return { success: true, message: '已在浏览器中打开链接' };
+    return { success: true, message: '已打开链接' };
   } catch (error) {
     console.error('打开外部链接失败:', error);
     return { success: false, message: error.message };
@@ -2014,20 +2446,21 @@ ipcMain.handle('install-plugin', async (event) => {
         console.log('[安装插件] 当前扩展数量:', extensions.length);
         
         if (Array.isArray(extensions) && extensions.length > 0) {
-          // 过滤掉损坏的插件引用（文件不存在但仍在 JSON 中）
+          // 【重要修复】只清理我们的插件引用，不影响其他插件
           const validExtensions = extensions.filter(ext => {
-            if (!ext.location || !ext.location.fsPath) {
-              console.log('[安装插件] 发现无效扩展（缺少 location）:', ext.identifier?.id || '未知');
-              return false;
-            }
-            
             // 检查是否是我们的插件（严格匹配）
             if (!ext.identifier || !ext.identifier.id) {
               return true; // 保留没有 identifier 或 id 的扩展
             }
             
-            // 【重要修复】只检查 windsurf-continue-pro 插件，不影响 ask-continue 插件
+            // 【重要修复】只检查 windsurf-continue-pro 插件，不影响其他任何插件
             if (isOurPlugin(ext.identifier.id, 'windsurf-continue-pro')) {
+              // 检查 location 是否有效
+              if (!ext.location || !ext.location.fsPath) {
+                console.log(`[安装插件] ❌ 发现无效的 windsurf-continue-pro 引用（缺少 location）: ${ext.identifier.id}`);
+                return false; // 只删除我们的无效引用
+              }
+              
               // 检查插件目录是否存在
               const pluginExists = fs.existsSync(ext.location.fsPath);
               console.log(`[安装插件] 检查 windsurf-continue-pro 插件: ${ext.identifier.id}`);
@@ -2046,7 +2479,7 @@ ipcMain.handle('install-plugin', async (event) => {
               }
             }
             
-            return true; // 保留其他正常的扩展
+            return true; // 保留所有其他扩展（无论 location 是否有效）
           });
           
           // 如果有损坏的引用被清理，更新 JSON 文件

@@ -133,6 +133,17 @@ body {
   font-weight: 600;
 }
 
+.nav-item.nav-item-disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: auto;
+}
+
+.nav-item.nav-item-disabled:hover {
+  background: transparent;
+  color: #718096;
+}
+
 .nav-icon,
 .nav-item .lucide {
   width: 18px;

@@ -1,6 +1,6 @@
 {
   "name": "papercrane-windsurf",
-  "version": "2.1.5",
+  "version": "2.1.8",
   "description": "PaperCrane-Windsurf 续杯工具",
   "main": "main.js",
   "scripts": {
@@ -18,7 +18,7 @@
     "switcher"
   ],
   "author": "PaperCrane",
-  "license": "MIT",
+  "license": "MIT",   
   "dependencies": {
     "adm-zip": "^0.5.16",
     "axios": "^1.6.0",
@@ -52,6 +52,7 @@
       "package.json",
       "renderer/**/*",
       "modules/**/*",
+      "scripts/**/*",
       "images/**/*",
       "node_modules/axios/**/*",
       "node_modules/lucide/**/*",

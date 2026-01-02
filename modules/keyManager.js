@@ -10,7 +10,8 @@ const path = require('path');
 // 配置 API 端点 - 可在此处统一修改
 const API_CONFIG = {
   // Base URL - 后端服务地址
-  BASE_URL: 'http://103.97.178.131:8010/api/client',
+  BASE_URL: 'http://windsurf.ziling.site/api/client',
+  // BASE_URL: 'http://103.97.178.131:8010/api/client',
   
   // 超时时间（毫秒）
   TIMEOUT: 10000
@@ -939,6 +940,169 @@ class KeyManager {
       return {
         success: false,
         message: message
+      };
+    }
+  }
+
+  /**
+   * Team卡密一键切号
+   * @param {boolean} autoLogin - 是否自动打开登录URL（默认true）
+   * @returns {Promise<Object>} 切号结果，包含callback_url和email
+   */
+  async teamSwitch(autoLogin = true) {
+    if (!this.keyData.key) {
+      return {
+        success: false,
+        message: '未设置秘钥'
+      };
+    }
+
+    try {
+      console.log('🔄 Team卡密一键切号...');
+      
+      const response = await axios.post(
+        API_CONFIG.BASE_URL + '/team/switch',
+        {},
+        {
+          timeout: 60000, // 60秒超时（第三方API可能较慢）
+          headers: {
+            'X-API-Key': this.keyData.key
+          }
+        }
+      );
+
+      if (response.data.success) {
+        console.log('✅ 切号成功:', response.data.email);
+        console.log('📦 返回数据:', JSON.stringify(response.data, null, 2));
+        
+        // 自动打开登录URL
+        if (autoLogin && response.data.callback_url) {
+          console.log('🔗 正在打开Windsurf登录:', response.data.callback_url);
+          const { shell } = require('electron');
+          await shell.openExternal(response.data.callback_url);
+          console.log('✅ 已调用shell.openExternal');
+        } else {
+          console.log('⚠️ 未打开登录URL, autoLogin:', autoLogin, ', callback_url:', response.data.callback_url);
+        }
+        
+        return {
+          success: true,
+          data: response.data
+        };
+      } else {
+        return {
+          success: false,
+          message: response.data.message || '切号失败'
+        };
+      }
+    } catch (error) {
+      console.error('❌ Team切号失败:', error);
+      
+      let message = '切号失败';
+      if (error.response) {
+        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
+      return {
+        success: false,
+        message: message
+      };
+    }
+  }
+
+  /**
+   * Pro卡密一键切号（无感换号）
+   * 调用后端 /pro/switch 接口获取 OTT Token，通过 URI Handler 实现无感换号
+   * @returns {Promise<Object>} 切号结果，包含callback_url和email
+   */
+  async proSwitch() {
+    if (!this.keyData.key) {
+      return {
+        success: false,
+        message: '未设置秘钥'
+      };
+    }
+
+    try {
+      console.log('🔄 Pro卡密一键切号（无感换号模式）...');
+      
+      const response = await axios.post(
+        API_CONFIG.BASE_URL + '/pro/switch',
+        {},
+        {
+          timeout: 60000, // 60秒超时（登录可能较慢）
+          headers: {
+            'X-API-Key': this.keyData.key
+          }
+        }
+      );
+
+      if (response.data.success) {
+        console.log('✅ Pro切号成功:', response.data.email);
+        console.log('📋 Token类型:', response.data.token_type);
+        console.log('📦 返回数据:', JSON.stringify(response.data, null, 2));
+        
+        // 自动打开登录URL触发无感换号
+        if (response.data.callback_url) {
+          console.log('🔗 正在打开Windsurf登录:', response.data.callback_url.substring(0, 80) + '...');
+          const { shell } = require('electron');
+          await shell.openExternal(response.data.callback_url);
+          console.log('✅ 已触发Windsurf URI Handler');
+        } else {
+          console.log('⚠️ 未获取到callback_url');
+        }
+        
+        return {
+          success: true,
+          data: response.data
+        };
+      } else {
+        return {
+          success: false,
+          message: response.data.message || 'Pro切号失败'
+        };
+      }
+    } catch (error) {
+      console.error('❌ Pro切号失败:', error);
+      
+      let message = 'Pro切号失败';
+      if (error.response) {
+        message = error.response.data?.detail || error.response.data?.message || `服务器错误 (${error.response.status})`;
+      } else if (error.code === 'ECONNABORTED') {
+        message = '请求超时';
+      } else if (error.code === 'ENOTFOUND' || error.code === 'ECONNREFUSED') {
+        message = '无法连接到服务器';
+      }
+
+      return {
+        success: false,
+        message: message
+      };
+    }
+  }
+
+  /**
+   * 打开Windsurf登录URL（用于Team卡密切号）
+   * @param {string} callbackUrl - windsurf:// 协议的登录URL
+   * @returns {Promise<Object>} 打开结果
+   */
+  static async openWindsurfLogin(callbackUrl) {
+    try {
+      const { shell } = require('electron');
+      await shell.openExternal(callbackUrl);
+      return {
+        success: true,
+        message: '已打开Windsurf登录'
+      };
+    } catch (error) {
+      console.error('打开登录URL失败:', error);
+      return {
+        success: false,
+        message: `打开失败: ${error.message}`
       };
     }
   }

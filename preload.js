@@ -74,6 +74,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   // 获取账号
   getAccount: () => ipcRenderer.invoke('get-account'),
+  
+  // Team卡密一键切号
+  teamSwitch: () => ipcRenderer.invoke('team-switch'),
+  
+  // Pro卡密一键切号（无感换号，调用后端 /pro/switch）
+  proSwitch: () => ipcRenderer.invoke('pro-switch'),
+  
+  // Pro账号无感换号（旧方法，使用传入的apiKey）
+  proSeamlessSwitch: (apiKey, email) => ipcRenderer.invoke('pro-seamless-switch', { apiKey, email }),
 
   // ===== 账号历史管理 API =====
   
@@ -190,5 +199,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
   hideSensitiveFiles: () => ipcRenderer.invoke('hide-sensitive-files'),
   
   // 显示隐藏的文件
-  unhideSensitiveFiles: () => ipcRenderer.invoke('unhide-sensitive-files')
+  unhideSensitiveFiles: () => ipcRenderer.invoke('unhide-sensitive-files'),
+
+  // ===== Extension Patcher API (参考 windsurf-switcher.exe) =====
+  
+  // 获取补丁状态
+  patcherStatus: () => ipcRenderer.invoke('patcher-status'),
+  
+  // 安装补丁
+  patcherInstall: () => ipcRenderer.invoke('patcher-install'),
+  
+  // 恢复原始文件
+  patcherRestore: () => ipcRenderer.invoke('patcher-restore')
 });
